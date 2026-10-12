@@ -309,7 +309,7 @@ public final class AccessControlContext {
                     return acc; // avoid hash collision, return new instance.
                 }
             }
-            if key.match(acc) return acc; // hash collision check.
+            if (key.match(acc)) return acc; // hash collision check.
             // if we get here, the key and acc have the same hash but are not equal, so we return a new instance.
         } 
         return new AccessControlContext(context, privilegedContext,combiner, isPrivileged);
@@ -946,7 +946,10 @@ public final class AccessControlContext {
             if (!Objects.equals(this.combiner, acc.combiner)) return false;
             if (!Objects.equals(this.privilegedContext, acc.privilegedContext)) return false;
             if (this.context == null && acc.context == null) return true; 
-            if (this.context == null && acc.context != null) return false;
+            if (this.context == null && acc.context != null ) {
+                if (acc.context.length == 0) return true;
+                return false;
+            }
             if (this.context != null && acc.context == null) return false;
             if (this.context.size() != acc.context.length) return false;
             for (int i = 0, l = acc.context.length; i < l; i++){
