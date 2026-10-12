@@ -30,11 +30,13 @@ import au.zeus.jdk.authorization.spire.SpiffeCredentialManager;
 import au.zeus.jdk.net.Uri;
 import java.io.FilePermission;
 import java.io.IOException;
+import java.io.File;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLPermission;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
+import java.util.Locale;
 import sun.security.util.Debug;
 
 import java.util.Map;
@@ -355,7 +357,22 @@ public class SecureClassLoader extends ClassLoader {
                 Permission checkURL;
                 String scheme = key.uri.getScheme();
                 if ("file".equals(scheme)){
-                    checkURL = new FilePermission(key.uri.toString(), "read");
+                    String host = key.uri.getHost();
+                    if (host != null && !host.isEmpty() && File.separatorChar == '\\' && key.uri.getUserInfo() == null
+                        && key.uri.getPort() == -1 && key.uri.getQuery() == null && key.uri.getFragment() == null) {
+                        // UNC path, e.g. file://host/share/file.txt
+                        String raw = key.uri.getRawPath();
+                        String lower = raw.toLowerCase(Locale.ROOT);
+                        if (lower.contains("%2f") || lower.contains("%5c") || lower.contains("%00"))
+                            throw new SecurityException("Codebase path contains an encoded separator or NUL: " + key.uri);
+                        checkURL = new FilePermission(new File("\\\\" + host + key.uri.getPath().replace('/', '\\')).getPath(), "read");
+                    } else {
+                        try {
+                            checkURL = new FilePermission(Uri.uriToFile(key.uri).getPath(), "read");
+                        } catch (IllegalArgumentException ex) {
+                            throw new SecurityException("Codebase is not a local file: " + key.uri, ex);
+                        }
+                    }
                 } else {
                     checkURL = new URLPermission(key.uri.toString(), "GET:");
                 }

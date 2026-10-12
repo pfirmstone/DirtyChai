@@ -545,7 +545,7 @@ public class SecurityPolicyWriter extends CombinerSecurityManager{
                                     }
                                     name = name.replace("/", "${/}");
                                 } else if (p instanceof SocketPermission || p instanceof URLPermission){
-                                    name = name.replace(hostname, "${HOST}");
+                                    if (hostname != null) name = name.replace(hostname, "${HOST}");
                                 } else {
                                     name = name.replace("\\\"", "\\\\\"").replace("\"","\\\"").replace("\r","\\\r");
                                 }
