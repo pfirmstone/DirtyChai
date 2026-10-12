@@ -153,8 +153,7 @@ public final class DomainIdentity extends ProtectionDomain {
                           Principal[] principals) 
     {
         super(codesource, permissions, classloader, principals);
-        this.principals = principals != null ? 
-                new HashSet<>(Arrays.asList(principals)) : null;
+        this.principals = principals != null ? Arrays.asList(principals): null; // Preserve order of Spiffe
         this.permissions = permissions != null ? permissionsToSet(permissions) : null;
         this.uriCS = codesource instanceof DigestCodeSource ? codesource : 
                 codesource!= null ? new UriCodeSource(codesource) : null;
@@ -165,7 +164,7 @@ public final class DomainIdentity extends ProtectionDomain {
         if (this.uriCS == null && codesource != null) hash = 7 * hash + codesource.hashCode();
         hash = 7 * hash + permissionsHashCode(permissions);
         hash = 7 * hash + Objects.hashCode(classloader);
-        hash = 7 * hash + Arrays.deepHashCode(principals);
+        hash = 7 * hash + Objects.hashCode(this.principals);
         hashcode = hash;
     }
     

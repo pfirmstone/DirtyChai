@@ -304,13 +304,16 @@ public final class AccessControlContext {
                 acc = new AccessControlContext(context, privilegedContext,
                         combiner, isPrivileged);
                 AccessControlContext existed = CONTEXTS.putIfAbsent(key, acc);
-                if (existed != null) return existed;
+                if (existed != null) {
+                    if (key.match(existed)) return existed;
+                    return acc; // avoid hash collision, return new instance.
+                }
             }
-            return acc;
-        } else {  
-            return new AccessControlContext(context, privilegedContext,
-                                        combiner, isPrivileged);
-        }
+            if key.match(acc) return acc; // hash collision check.
+            // if we get here, the key and acc have the same hash but are not equal, so we return a new instance.
+        } 
+        return new AccessControlContext(context, privilegedContext,combiner, isPrivileged);
+        
     }
     
     /**
@@ -906,7 +909,7 @@ public final class AccessControlContext {
             this.combiner = combiner;
             this.isPrivileged = isPrivileged;
             int hash = 7;
-            if (this.context != null) hash = 13 * hash + Arrays.deepHashCode(context);
+            if (this.context != null) hash = 13 * hash + Objects.hashCode(this.context);
             hash = 13 * hash + Objects.hashCode(this.privilegedContext);
             hash = 13 * hash + Objects.hashCode(this.combiner);
             hash = 13 * hash + (this.isPrivileged ? 1231 : 1237);
@@ -935,6 +938,21 @@ public final class AccessControlContext {
                 return Objects.equals(this.privilegedContext, that.privilegedContext);
             }
             return false;
+        }
+
+        boolean match(AccessControlContext acc){
+            if (acc == null) return false;
+            if (this.isPrivileged != acc.isPrivileged) return false;
+            if (!Objects.equals(this.combiner, acc.combiner)) return false;
+            if (!Objects.equals(this.privilegedContext, acc.privilegedContext)) return false;
+            if (this.context == null && acc.context == null) return true; 
+            if (this.context == null && acc.context != null) return false;
+            if (this.context != null && acc.context == null) return false;
+            if (this.context.size() != acc.context.length) return false;
+            for (int i = 0, l = acc.context.length; i < l; i++){
+                if (!this.context.contains(acc.context[i])) return false;
+            }
+            return true;
         }
     }
     
