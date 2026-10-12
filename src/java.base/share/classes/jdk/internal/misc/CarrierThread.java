@@ -139,17 +139,7 @@ public class CarrierThread extends ForkJoinWorkerThread {
      */
     @SuppressWarnings("removal")
     private static AccessControlContext innocuousACC() {
-        return AccessController.doPrivileged(
-                new PrivilegedAction<AccessControlContext>(){
-                    @Override
-                    public AccessControlContext run() {
-                        return AccessController.getContext();
-                    }
-
-                },
-                null,
-                new Permission[0]
-            );
+        return AccessControlContext.unprivileged();
     }
 
     /**

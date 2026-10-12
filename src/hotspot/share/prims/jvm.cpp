@@ -1253,7 +1253,7 @@ JVM_END
 
 // Returns the inherited_access_control_context field of the running thread.
 JVM_ENTRY(jobject, JVM_GetInheritedAccessControlContext(JNIEnv *env, jclass cls))
-  oop result = java_lang_Thread::inherited_access_control_context(thread->threadObj());
+  oop result = java_lang_Thread::inherited_access_control_context(thread->vthread());
   return JNIHandles::make_local(THREAD, result);
 JVM_END
 
