@@ -29,6 +29,7 @@ import au.zeus.jdk.concurrent.RC;
 import au.zeus.jdk.concurrent.Ref;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Initialized by VM, not loaded by same ClassLoader as AccessControlContext.
@@ -38,6 +39,8 @@ class ContextCache {
     private ContextCache(){};
 
     static {
+        // Initialize the random number generator for the AccessControlContext cache.
+        ThreadLocalRandom.current();
         // Reference type change from time based to weak, with short cycle time
         // of 4000 to pass jtreg:test/jdk/java/lang/ClassLoader/forNameLeak/ClassForNameLeak.java
         // Consider increasing test time if we need longer cycle times.
