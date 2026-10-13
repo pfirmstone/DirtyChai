@@ -22,6 +22,8 @@ import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.Externalizable;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.ObjectInput;
@@ -47,6 +49,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -55,6 +58,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Stream;
 import sun.net.util.URLUtil;
+import sun.security.provider.InternalDigests;
+import jdk.internal.misc.VM;
 
 /**
  * Non Standard API.
@@ -663,6 +668,16 @@ public final class DigestCodeSource extends CodeSource implements Externalizable
     }
 
     /**
+     * Returns the URI of this code source, the type of this object is not
+     * published, calling toString on it will produce a RFC 3986 compliant URI string.
+     *
+     * @return the URI of this code source
+     */
+    public Object getUri() {
+        return uri;
+    }
+
+    /**
      * Encodes a byte array as a lowercase hex string.
      */
     private static String hexEncode(byte[] bytes) {
@@ -850,6 +865,11 @@ public final class DigestCodeSource extends CodeSource implements Externalizable
     // Digest computation — two-layer cache
     // -----------------------------------------------------------------------
 
+    private static byte[] computeDirectoryDigest(File directory, String algorithm)
+            throws IOException, NoSuchAlgorithmException {
+        throw new UnsupportedOperationException("Directory digest computation is not supported at this time");
+    }
+
     /**
      * Computes an aggregate digest of a named JDK module by walking every
      * resource entry via {@link ModuleReader} in lexicographic order and
@@ -875,9 +895,9 @@ public final class DigestCodeSource extends CodeSource implements Externalizable
         if (oref.isEmpty()) {
             throw new SecurityException("Module not found in system image: " + moduleName);
         }
-        MessageDigest md = MessageDigest.getInstance(algorithm);
+        InternalDigests md = InternalDigests.sha256();
         try (ModuleReader reader = oref.get().open();
-             Stream<String> entries = reader.list()) {
+            Stream<String> entries = reader.list()) {
             // Sort for a deterministic digest regardless of iteration order.
             entries.sorted().forEach(name -> {
                 try {
@@ -900,7 +920,7 @@ public final class DigestCodeSource extends CodeSource implements Externalizable
         } catch (java.io.UncheckedIOException ex) {
             throw ex.getCause();
         }
-        return md.digest();
+        return md.digest(); 
     }
 
     /**
@@ -942,7 +962,7 @@ public final class DigestCodeSource extends CodeSource implements Externalizable
      */
     private static byte[] computeDigest(Uri uri, URL url, String algorithm)
             throws IOException, NoSuchAlgorithmException {
-        byte[] computed;
+        byte[] computed = null;
 
         String scheme = uri.getScheme();
         if ("jrt".equals(scheme) || "jmod".equals(scheme)) {
@@ -958,7 +978,45 @@ public final class DigestCodeSource extends CodeSource implements Externalizable
             int slash = moduleName.indexOf('/');
             if (slash != -1) moduleName = moduleName.substring(0, slash);
             computed = computeModuleDigest(moduleName, algorithm);
+        } else if ("file".equals(scheme)) {
+            File file = null;
+            String host = uri.getHost();
+            // Only allow network after the VM is booted.
+            if (host != null && !host.isEmpty() && File.separatorChar == '\\' && uri.getUserInfo() == null
+                && uri.getPort() == -1 && uri.getQuery() == null && uri.getFragment() == null) {
+                if (!VM.isBooted()) {
+                    throw new UnsupportedOperationException("Network file access is not allowed before the VM is booted: " + uri);
+                }
+                // UNC path, e.g. file://host/share/file.txt
+                String raw = uri.getRawPath();
+                String lower = raw.toLowerCase(Locale.ROOT);
+                if (lower.contains("%2f") || lower.contains("%5c") || lower.contains("%00")){
+                    throw new SecurityException("Codebase path contains an encoded separator or NUL: " + uri);
+                }
+                file = new File("\\\\" + host + uri.getPath().replace('/', '\\'));
+            } else {
+                try {
+                    file = Uri.uriToFile(uri);
+                } catch (IllegalArgumentException ex) {
+                    throw new SecurityException("Codebase is not a local file: " + uri, ex);
+                }
+            }
+            if (file.exists()) {
+                if (!file.canRead()) {
+                    throw new SecurityException("Codebase file exists but is not readable: " + uri);
+                }
+                if (file.isDirectory()) {
+                    computed = computeDirectoryDigest(file, algorithm);
+                } else {
+                    try (InputStream in = new BufferedInputStream(new FileInputStream(file), 8192)) {
+                        computed = computeDigestFromStream(in, algorithm);
+                    }
+                }
+            }
         } else {
+            if (!VM.isBooted()) {
+                throw new UnsupportedOperationException("Network URL access is not allowed before the VM is booted: " + uri);
+            }
             // Layer 1: URLConnection consults JarResponseCache automatically via
             // setUseCaches(true).  On a cache hit no network connection is opened;
             // on a miss the response is downloaded and stored by JarResponseCache.
@@ -980,7 +1038,7 @@ public final class DigestCodeSource extends CodeSource implements Externalizable
         // Applies to all schemes — including jrt: and jmod: — so that a
         // tampered JDK image is detected on every subsequent class load.
         DigestCacheKey key = new DigestCacheKey(uri, algorithm);
-        byte[] trusted = digestCache.putIfAbsent(key, computed.clone());
+        byte[] trusted = computed != null ? digestCache.putIfAbsent(key, computed.clone()) : null;
         if (trusted != null && !Arrays.equals(trusted, computed)) {
             // The artifact has changed since the digest was first trusted.
             // Evict only the raw-bytes cache entry so the next access re-downloads
@@ -1007,7 +1065,8 @@ public final class DigestCodeSource extends CodeSource implements Externalizable
      */
     private static byte[] computeDigestFromStream(InputStream in, String algorithm)
             throws IOException, NoSuchAlgorithmException {
-        MessageDigest md = MessageDigest.getInstance(algorithm);
+        
+        InternalDigests md = InternalDigests.sha256();
         byte[] buf = new byte[8192];
         long totalRead = 0;
         int n;

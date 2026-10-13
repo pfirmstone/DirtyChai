@@ -371,6 +371,7 @@ public final class Uri implements Comparable<Uri> {
     private final String host;
     private final int port;
     private final String path;
+    private final String normalised_file_path;
     private final String query;
     private final String fragment;
     private final boolean opaque;
@@ -462,6 +463,12 @@ public final class Uri implements Comparable<Uri> {
         this.hashString = getHashString();
         this.hash = hash == -1 ? hashString.hashCode(): hash;
         this.fileSchemeCaseInsensitiveOS = fileSchemeCaseInsensitiveOS;
+        if (fileSchemeCaseInsensitiveOS && path != null) {
+            // Convert path to upper case for file: scheme on case insensitive OS
+            normalised_file_path = toAsciiUpperCase(path);
+        } else {
+            normalised_file_path = path;
+        }
     }
     
     /**
@@ -1282,15 +1289,8 @@ public final class Uri implements Comparable<Uri> {
 
             //javadoc:3.6
             // compatbility with URL.getFile
-            String thisFile;
-            String thatFile;
-            if (fileSchemeCaseInsensitiveOS){
-                thisFile = path == null ? null: toAsciiUpperCase(path);
-                thatFile = implied.path == null ? null: toAsciiUpperCase(implied.path);
-            } else {
-                thisFile = path;
-                thatFile = implied.path;
-            }
+            String thisFile = normalised_file_path;
+            String thatFile = implied.normalised_file_path;
             if (thatFile == null || thisFile == null) return false;
             if (thisFile.endsWith("/-")) { //javadoc:3.6."/-" //$NON-NLS-1$
                 if (!thatFile.startsWith(thisFile.substring(0, thisFile

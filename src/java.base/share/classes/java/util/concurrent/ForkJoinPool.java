@@ -3614,7 +3614,13 @@ public class ForkJoinPool extends AbstractExecutorService
             long isShutdown = lockRunState() & SHUTDOWN;
             try {
                 if (isShutdown == 0L && (ds = delayScheduler) == null) {
-                    ds = delayScheduler = new DelayScheduler(this, name);
+                    ds = delayScheduler = AccessController.doPrivileged(new PrivilegedAction<DelayScheduler>(
+                        ) {
+                            public DelayScheduler run() {
+                                return new DelayScheduler(ForkJoinPool.this, name);
+                            }
+                        });
+
                     start = true;
                 }
             } finally {

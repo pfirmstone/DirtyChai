@@ -26,11 +26,14 @@
 package java.security;
 
 import au.zeus.jdk.authorization.sm.CombinerSecurityManager;
+import java.lang.ref.WeakReference;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
+import java.util.LinkedHashSet;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ForkJoinPool;
 import java.lang.invoke.MethodHandles;
@@ -96,23 +99,21 @@ public final class AccessControlContext {
     // Note: This field is directly used by the virtual machine
     // native codes. Don't touch it.
     private final AccessControlContext privilegedContext;
-    
-    // This field is directly used by the virtual machine native codes.
-    static volatile boolean INIT = false;
 
     @SuppressWarnings("removal")
     private final DomainCombiner combiner;
 
-    private final int hashCode;
+    private int hashCode;
 
     private static boolean debugInit = false;
     private static Debug debug = null;
-    static volatile ConcurrentMap<ContextKey,AccessControlContext> CONTEXTS;
+    static volatile AtomicReferenceArray<WeakReference<AccessControlContext>> CONTEXTS;
+    private static volatile int MASK;
     // Called by ContextCache class initalizer, by VM at completion of VM init.
-    static void initCache(ConcurrentMap<ContextKey,AccessControlContext> cache){
+    static void initCache(AtomicReferenceArray<WeakReference<AccessControlContext>> cache, int slots){
         if (CONTEXTS != null) return;
         CONTEXTS = cache;
-        INIT = true;
+        MASK = slots - 1;
     }
 
     @SuppressWarnings("removal")
@@ -129,7 +130,30 @@ public final class AccessControlContext {
         }
     }
 
-    /* Called by the virtual machine native codes. Don't touch */
+    /**
+     * Create an {@code AccessControlContext} with the given array of
+     * {@code ProtectionDomain} objects.
+     * Context must not be {@code null}. Duplicate domains will be removed
+     * from the context.  If caller does not have the "createAccessControlContext"
+     * {@link SecurityPermission}, then domains from the calling context will 
+     * be added to prevent privilege escalation.
+     * 
+     * <p>
+     * Non standard API.
+     *
+     * @param context the {@code ProtectionDomain} objects associated with this
+     * context. The non-duplicate domains are copied from the array. Subsequent
+     * changes to the array will not affect this {@code AccessControlContext}.
+     * @param privileged_context the privileged context associated with this
+     * context.  This is used to determine if a privileged action was performed
+     * in the current call stack.
+     * @param isPrivileged true if this context is from a privileged action call
+     * scope, false otherwise.
+     * @return a cached AccessControlContext matching the provided parameters or
+     * a new AccessControlContext if one doesn't already exist.
+     * @throws NullPointerException if {@code context} is {@code null}
+     * @since 25
+     */
     static AccessControlContext create(ProtectionDomain [] context,
             AccessControlContext privileged_context,
             boolean isPrivileged)
@@ -296,24 +320,73 @@ public final class AccessControlContext {
                                       boolean isPrivileged)
     {
         if (CONTEXTS != null){
-            ContextKey key = 
-                    new ContextKey(context, privilegedContext,
-                                   combiner, isPrivileged);
-            AccessControlContext acc = CONTEXTS.get(key);
-            if (acc == null){
-                acc = new AccessControlContext(context, privilegedContext,
-                        combiner, isPrivileged);
-                AccessControlContext existed = CONTEXTS.putIfAbsent(key, acc);
-                if (existed != null) {
-                    if (key.match(existed)) return existed;
-                    return acc; // avoid hash collision, return new instance.
+            int hash = genHashCode(context, privilegedContext, combiner, isPrivileged);
+            int h = hash ^ (hash >>> 16);
+            int i = h & MASK;      // first slot
+            int j = i ^ 1;         // its neighbour: flips the lowest bit, same pair, always in range
+            WeakReference<AccessControlContext> acciw = CONTEXTS.get(i);
+            AccessControlContext acci = acciw != null ? acciw.get() : null;
+            WeakReference<AccessControlContext> accjw = CONTEXTS.get(j);
+            AccessControlContext accj = accjw != null ? accjw.get() : null;
+            AccessControlContext result = null;
+            if (acci != null){
+                if (acci.hashCode == hash) {
+                    if (acci.match(context, privilegedContext, combiner, isPrivileged)) {
+                        return acci;
+                    } else if (accj != null) {
+                        if (accj.hashCode == hash){
+                            if (accj.match(context, privilegedContext, combiner, isPrivileged)){
+                                return accj;
+                            } else {
+                                // avoid hash collision, return new instance.
+                                return new AccessControlContext(context, privilegedContext, combiner, isPrivileged);
+                            }
+                        }
+                    } else {
+                        result = new AccessControlContext(context, privilegedContext, combiner, isPrivileged);
+                        WeakReference<AccessControlContext> wacc = new WeakReference<AccessControlContext>(result);
+                        if (CONTEXTS.compareAndSet(j, acciw, wacc)) {
+                            return result;
+                        } else {
+                            accjw = CONTEXTS.get(j);
+                            accj = accjw != null ? accjw.get() : null;
+                            if (accj != null && accj.hashCode == hash && accj.match(context, privilegedContext, combiner, isPrivileged)) {
+                                return accj;
+                            } else {
+                                return result;
+                            }
+                        }
+                    }
+                }
+            } else {
+                if (result == null) result = new AccessControlContext(context, privilegedContext, combiner, isPrivileged);
+                WeakReference<AccessControlContext> wacc = new WeakReference<AccessControlContext>(result);
+                if (CONTEXTS.compareAndSet(i, acciw, wacc)) {
+                    return result;
+                } else {
+                    acciw = CONTEXTS.get(i);
+                    acci = acciw != null ? acciw.get() : null;
+                    if (acci != null && acci.hashCode == hash && acci.match(context, privilegedContext, combiner, isPrivileged)) {
+                        return acci;
+                    } else {
+                        return result;
+                    }
                 }
             }
-            if (key.match(acc)) return acc; // hash collision check.
-            // if we get here, the key and acc have the same hash but are not equal, so we return a new instance.
-        } 
-        return new AccessControlContext(context, privilegedContext,combiner, isPrivileged);
-        
+            if (result != null) return result;
+            else return new AccessControlContext(context, privilegedContext, combiner, isPrivileged);
+        }
+        ProtectionDomain[] unduplicatedContext = context;
+        if (context != null && context.length > 1) {
+            Set<ProtectionDomain> v = new LinkedHashSet<>(context.length);
+            for (int i =0; i< context.length; i++) {
+                if ((context[i] != null)) v.add(context[i]);
+            }
+            if (!v.isEmpty()) {
+                unduplicatedContext = v.toArray(new ProtectionDomain[v.size()]);
+            }
+        }
+        return new AccessControlContext(unduplicatedContext, privilegedContext,combiner, isPrivileged);
     }
     
     /**
@@ -505,11 +578,32 @@ public final class AccessControlContext {
                                    boolean isPrivileged)
     {
         int hash = 5;
-        hash = hash * 27 + (context != null ? asSet(context).hashCode() : 0);
+        hash = hash * 27 + (context != null ? domainsHash(context) : 0);
         hash = hash * 27 + Objects.hashCode(privilegedContext);
         hash = hash * 27 + Objects.hashCode(combiner);
         hash = hash * 27 + (isPrivileged ? 1 : 0);
         return hash;
+    }
+
+    /**
+     * Equal to Set(pds).hashCode(): the sum of the hash codes of the
+     * distinct non-null domains, so equal domain sets hash equally
+     * whatever their order or repetition.
+     */
+    private static int domainsHash(ProtectionDomain[] pds) {
+        if (pds == null) return 0;
+        int h = 0;
+        outer:
+        for (int i = 0; i < pds.length; i++) {
+            ProtectionDomain pd = pds[i];
+            if (pd == null) continue;
+            for (int j = 0; j < i; j++) {          // already counted?
+                ProtectionDomain prev = pds[j];
+                if (prev == pd || (prev != null && prev.equals(pd))) continue outer;
+            }
+            h += pd.hashCode();
+        }
+        return h;
     }
 
     /**
@@ -752,12 +846,12 @@ public final class AccessControlContext {
         // optimisation: if neither have context; return acc if possible
         // rather than this, becasue acc might have a combiner
         if (skipAssigned && skipStack){
-            return this;
+            return create(this.context, this.privilegedContext, this.combiner, this.isPrivileged);
         }
         // optimization: if there is no stack context; there is no reason
         // to compress the assigned context, it already is compressed
         if (skipStack){
-            return acc;
+            return create(acc.context, acc.privilegedContext, acc.combiner, acc.isPrivileged);
         }
 
         int slen = context.length;
@@ -766,13 +860,13 @@ public final class AccessControlContext {
         // is less then or equal to two; there is no reason to compress the
         // stack context, it already is
         if (skipAssigned && slen <= 2) {
-            return this;
+            return create(this.context, this.privilegedContext, this.combiner, this.isPrivileged);
         }
 
         // optimization: if there is a single stack domain and that domain
         // is already in the assigned context; no need to combine
         if ((slen == 1) && acc.context.length > 0 && (context[0] == acc.context[0])){
-            return acc;
+            return create(acc.context, acc.privilegedContext, acc.combiner, acc.isPrivileged);
         }
 
         int n = (skipAssigned)? 0 : acc.context.length;
@@ -803,16 +897,16 @@ public final class AccessControlContext {
         if (n != pd.length) {
             // optimization: if we didn't really combine anything
             if (!skipAssigned && n == acc.context.length) {
-                return acc;
+                return create(acc.context, acc.privilegedContext, acc.combiner, acc.isPrivileged);
             } else if (skipAssigned && n == slen) {
-                return this;
+                return create(this.context, this.privilegedContext, this.combiner, this.isPrivileged);
             }
             ProtectionDomain[] tmp = new ProtectionDomain[n];
             System.arraycopy(pd, 0, tmp, 0, n);
             pd = tmp;
         }
 
-        return AccessControlContext.create(pd, privilegedContext, null, false);
+        return create(pd, privilegedContext, null, false);
     }
 
     private AccessControlContext goCombiner(ProtectionDomain[] current, 
@@ -856,9 +950,48 @@ public final class AccessControlContext {
             if (that.context == null && this.context != null) return false;
             if (!Objects.equals(this.combiner, that.combiner)) return false;
             if (!Objects.equals(this.privilegedContext, that.privilegedContext)) return false;
-            return (Objects.equals(asSet(this.context), asSet(that.context)));
+            return sameDomains(this.context, that.context);
         }
         return false;       
+    }
+
+    boolean match(ProtectionDomain[] context,
+                  AccessControlContext privilegedContext,
+                  DomainCombiner combiner,
+                  boolean isPrivileged){
+        if (this.isPrivileged != isPrivileged) return false;
+        if (!Objects.equals(this.combiner, combiner)) return false;
+        if (!Objects.equals(this.privilegedContext, privilegedContext)) return false;
+        return sameDomains(this.context, context);
+    }
+
+    /** True if every non-null domain in b is equal to some domain in a. */
+    private static boolean containsAll(ProtectionDomain[] a, ProtectionDomain[] b) {
+        if (b == null) return true;
+        if (a.length > 32) {
+            Set<ProtectionDomain> set = asSet(a);
+            for (ProtectionDomain y : b) {
+                if (y == null) continue;
+                if (!set.contains(y)) return false;
+            }
+            return true;
+        }
+        outer:
+        for (ProtectionDomain y : b) {
+            if (y == null) continue;
+            if (a != null) {
+                for (ProtectionDomain x : a) {
+                    if (x == y || (x != null && x.equals(y))) continue outer;
+                }
+            }
+            return false;
+        }
+        return true;
+    }
+
+    /** Same distinct domains, in any order, ignoring repeats; null equals empty. */
+    private static boolean sameDomains(ProtectionDomain[] a, ProtectionDomain[] b) {
+        return a == b || (containsAll(a, b) && containsAll(b, a));
     }
     
     private static <T> Set<T> asSet(T[] a){
@@ -878,85 +1011,10 @@ public final class AccessControlContext {
      */
     @Override
     public int hashCode() {
+        if (hashCode == 0) {
+            hashCode = genHashCode(context, privilegedContext, combiner, isPrivileged);
+        }
         return hashCode;
-    }
-
-    /**
-     * Cache for AccessControlContext. Initialized following VM init phase 2.
-     */
-    static class ContextKey implements Comparable<ContextKey>{
-
-        private final Set<ProtectionDomain> context;
-        private final AccessControlContext privilegedContext;
-        private final DomainCombiner combiner;
-        private final boolean isPrivileged;
-        private final int hashCode;
-
-        ContextKey(AccessControlContext c){
-            this(c.context, c.privilegedContext,
-                    c.combiner, c.isPrivileged);
-        }
-
-        ContextKey(ProtectionDomain[] context,
-                   AccessControlContext privilegedContext,
-                   DomainCombiner combiner,
-                   boolean isPrivileged)
-        {
-            this.context = (context != null && context.length > 0 ? 
-                    new HashSet<ProtectionDomain>(context.length) : null);
-            if (this.context != null) this.context.addAll(Arrays.asList(context));
-            this.privilegedContext = privilegedContext;
-            this.combiner = combiner;
-            this.isPrivileged = isPrivileged;
-            int hash = 7;
-            if (this.context != null) hash = 13 * hash + Objects.hashCode(this.context);
-            hash = 13 * hash + Objects.hashCode(this.privilegedContext);
-            hash = 13 * hash + Objects.hashCode(this.combiner);
-            hash = 13 * hash + (this.isPrivileged ? 1231 : 1237);
-            this.hashCode = hash;
-        }
-        
-        public int compareTo(ContextKey that){
-            if (this.hashCode == that.hashCode) return 0;
-            return this.hashCode < that.hashCode ? -1 : 1;
-        }
-
-        @Override
-        public int hashCode() {
-            return hashCode;
-        }
-
-        @Override
-        public boolean equals(Object o){
-            if (this == o) return true;
-            if (o == null) return false;
-            if (this.hashCode() != o.hashCode()) return false;
-            if (o instanceof ContextKey that){
-                if (this.isPrivileged != that.isPrivileged) return false;
-                if (!Objects.equals(this.combiner,that.combiner)) return false;
-                if (!Objects.equals(this.context, that.context)) return false;
-                return Objects.equals(this.privilegedContext, that.privilegedContext);
-            }
-            return false;
-        }
-
-        boolean match(AccessControlContext acc){
-            if (acc == null) return false;
-            if (this.isPrivileged != acc.isPrivileged) return false;
-            if (!Objects.equals(this.combiner, acc.combiner)) return false;
-            if (!Objects.equals(this.privilegedContext, acc.privilegedContext)) return false;
-            if (this.context == null && acc.context == null) return true; 
-            if (this.context == null && acc.context != null ) {
-                if (acc.context.length == 0) return true;
-                return false;
-            }
-            if (this.context != null && acc.context == null) return false;
-            if (this.context.size() != acc.context.length) return false;
-            for (int i = 0, l = acc.context.length; i < l; i++){
-                if (!this.context.contains(acc.context[i])) return false;
-            }
-            return true;
-        }
     }
     
     /**

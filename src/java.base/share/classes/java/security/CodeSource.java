@@ -25,8 +25,9 @@
 
 package java.security;
 
-
+import au.zeus.jdk.net.Uri;
 import java.net.URL;
+import java.net.URISyntaxException;
 import java.net.SocketPermission;
 import java.util.ArrayList;
 import java.util.List;
@@ -78,6 +79,8 @@ public class CodeSource implements java.io.Serializable {
     // for generating cert paths
     transient CertificateFactory factory = null;
 
+    private transient Uri locationUri;
+
     /**
      * A {@code String} form of the URL for use as a key in HashMaps/Sets.
      * The {@code String} form should behave in the same manner as the URL
@@ -107,6 +110,9 @@ public class CodeSource implements java.io.Serializable {
         this.location = url;
         if (url != null) {
             this.locationNoFragString = URLUtil.urlNoFragString(url);
+            try{
+                this.locationUri = Uri.urlToUri(url);
+            } catch ( URISyntaxException e) {} // should not happen, since the URL was already created
         }
 
         // Copy the supplied certs
@@ -129,6 +135,9 @@ public class CodeSource implements java.io.Serializable {
         this.location = url;
         if (url != null) {
             this.locationNoFragString = URLUtil.urlNoFragString(url);
+            try{
+                this.locationUri = Uri.urlToUri(url);
+            } catch ( URISyntaxException e) {} // should not happen, since the URL was already created
         }
 
         // Copy the supplied signers
@@ -142,7 +151,7 @@ public class CodeSource implements java.io.Serializable {
      */
     @Override
     public int hashCode() {
-        return Objects.hashCode(location);
+        return Objects.hashCode(locationUri);
     }
 
     /**
@@ -164,7 +173,7 @@ public class CodeSource implements java.io.Serializable {
 
         // objects types must be equal
         return (obj instanceof CodeSource other)
-                && Objects.equals(location, other.location)
+                && Objects.equals(locationUri, other.locationUri)
                 && matchCerts(other, true);
     }
 
@@ -178,6 +187,19 @@ public class CodeSource implements java.io.Serializable {
         /* since URL is practically immutable, returning itself is not
            a security problem */
         return this.location;
+    }
+
+    /**
+     * Non Standard API.  Returns the location associated with this {@code CodeSource} as a
+     * RFC398-compliant URI Object. The implementation is not public api,
+     * but is used by the JDK to avoid the overhead of converting a URL to a URI.
+     * Calling toString() on it will return the same value as calling toString() on the URL returned by getLocation().
+     *
+     * @return the location, or {@code null} if no URL was supplied
+     * during construction.
+     */
+    public final Object getUriLocation() {
+        return this.locationUri;
     }
 
     /**

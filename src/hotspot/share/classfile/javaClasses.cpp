@@ -4763,8 +4763,7 @@ int java_security_AccessControlContext::_static_INIT_offset;
 #define ACCESSCONTROLCONTEXT_FIELDS_DO(macro) \
   macro(_context_offset,           k, "context",      protectiondomain_signature, false); \
   macro(_privilegedContext_offset, k, "privilegedContext", accesscontrolcontext_signature, false); \
-  macro(_isPrivileged_offset,      k, "isPrivileged", bool_signature, false); \
-  macro(_static_INIT_offset,       k, "INIT", bool_signature, true)
+  macro(_isPrivileged_offset,      k, "isPrivileged", bool_signature, false);
 
 void java_security_AccessControlContext::compute_offsets() {
   assert(_isPrivileged_offset == 0, "offsets should be initialized only once");
@@ -4788,28 +4787,14 @@ oop java_security_AccessControlContext::create(objArrayHandle context, bool isPr
   klass->initialize(CHECK_NULL);
   // Ensure cache is initialized before calling factory method.
   oop base = vmClasses::AccessControlContext_klass()->static_field_base_raw();
-  bool _initialized = base->bool_field(_static_INIT_offset);
-  if (_initialized){ // AccessControlContext is cached.
-      JavaValue result(T_OBJECT);
-      JavaCallArguments args;
-      args.push_oop(context);
-      args.push_oop(privileged_context);
-      args.push_int(isPrivileged);
-      JavaCalls::call_static(&result,
-                             klass,
-                             vmSymbols::createAccessControlContext_name(),
-                             vmSymbols::createAccessControlContext_signature(),
-                             &args, CHECK_NULL);
-      return result.get_oop();
-  } else { // Create a unique AccessControlContext instance.
-      // Allocate result
-      oop result = vmClasses::AccessControlContext_klass()->allocate_instance(CHECK_NULL);
-      // Fill in values
-      result->obj_field_put(_context_offset, context());
-      result->obj_field_put(_privilegedContext_offset, privileged_context());
-      result->bool_field_put(_isPrivileged_offset, isPrivileged);
-      return result;
-  }
+  // Create a unique AccessControlContext instance.
+  // Allocate result
+  oop result = vmClasses::AccessControlContext_klass()->allocate_instance(CHECK_NULL);
+  // Fill in values
+  result->obj_field_put(_context_offset, context());
+  result->obj_field_put(_privilegedContext_offset, privileged_context());
+  result->bool_field_put(_isPrivileged_offset, isPrivileged);
+  return result;
 }
 
 // Support for java_lang_ClassLoader

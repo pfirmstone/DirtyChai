@@ -148,7 +148,7 @@ final class DelayScheduler extends Thread {
     }
 
     DelayScheduler(ForkJoinPool p, String name) {
-        super(name);
+        super(null, null, name, 0, false, true);
         setDaemon(true);
         pool = p;
     }

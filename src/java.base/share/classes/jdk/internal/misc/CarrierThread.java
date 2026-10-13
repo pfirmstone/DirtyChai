@@ -139,7 +139,7 @@ public class CarrierThread extends ForkJoinWorkerThread {
      */
     @SuppressWarnings("removal")
     private static AccessControlContext innocuousACC() {
-        return AccessControlContext.unprivileged();
+        return AccessControlContext.neverPrivileged();
     }
 
     /**

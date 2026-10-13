@@ -27,6 +27,8 @@ package java.security;
 
 import au.zeus.jdk.concurrent.RC;
 import au.zeus.jdk.concurrent.Ref;
+import java.lang.ref.WeakReference;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ThreadLocalRandom;
@@ -35,22 +37,31 @@ import java.util.concurrent.ThreadLocalRandom;
  * Initialized by VM, not loaded by same ClassLoader as AccessControlContext.
  */
 class ContextCache {
+    private static final int MIN_SLOTS = 64;
+    private static final int MAX_SLOTS = 1 << 20;   // about 4 MB of references; anything larger is a mistake
     
     private ContextCache(){};
 
     static {
         // Initialize the random number generator for the AccessControlContext cache.
         ThreadLocalRandom.current();
-        // Reference type change from time based to weak, with short cycle time
-        // of 4000 to pass jtreg:test/jdk/java/lang/ClassLoader/forNameLeak/ClassForNameLeak.java
-        // Consider increasing test time if we need longer cycle times.
-        // Time of 3000L required to pass jtreg:test/langtools/tools/javac/Paths/MineField.java
-        // Note, weakly referenced value causes collection of Key value tuple,
-        // if there are contexts with identical hash only one will be collected.
-        // Non-blocking is a requirement.
-        ConcurrentMap<AccessControlContext.ContextKey,AccessControlContext> CONTEXTS 
-            = RC.concurrentMap(new ConcurrentSkipListMap<>(), Ref.STRONG, Ref.WEAK, 2000L, 2000L);
-        AccessControlContext.initCache(CONTEXTS);
+        // Permission is not required as we are pre SecurityManager initialization and the cache is not exposed to untrusted code.
+        int slots = slots(Integer.parseInt(System.getProperty("accessControlContext.cache.size", "4096")));
+        AtomicReferenceArray<WeakReference<AccessControlContext>> CONTEXTS =
+            new AtomicReferenceArray<>(slots);
+        AccessControlContext.initCache(CONTEXTS, slots);
+        // Ensure AtomicReferenceArray methods we use have their VarHandles initialized prior to SM.
+        CONTEXTS.get(0);
+        CONTEXTS.getAcquire(0);
+        CONTEXTS.set(0, null);
+        CONTEXTS.setRelease(0, null);
+        CONTEXTS.compareAndSet(0, null, null);
+    }
+
+    static int slots(int requested) {
+        int n = Math.clamp(requested, MIN_SLOTS, MAX_SLOTS);
+        // Smallest power of two >= n.  n >= 2 here, so n - 1 >= 1 and the shift is well defined.
+        return Integer.highestOneBit(n - 1) << 1;
     }
     
 }

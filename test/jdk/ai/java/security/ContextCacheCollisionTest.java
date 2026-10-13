@@ -30,6 +30,8 @@
  *          checkPermission(...) evaluates against the encapsulated context",
  *          section 4 guarantee 2, "Least privilege", and section 15
  *          invariant 4, "Policy evaluation must remain deny-by-default".
+ *          Conversely, contexts with the same domains, including arrays
+ *          that repeat a domain, must share one cached context.
  * @author Claude Opus 5.5 (claude-opus-5-5) -- AI-authored under AI_POLICY.md 4.1 (Zone T)
  * @run main/othervm -Djava.security.manager=allow ContextCacheCollisionTest
  */
@@ -88,7 +90,19 @@ import java.security.cert.Certificate;
  *     hit, so a context with no domains never matches itself.
  *     EXPECTED: "control: empty contexts intern to one cached context" fails.
  *     OBSERVED: not yet recorded.</li>
+ * <li>M4: stop removing repeated domains in create(), so a domain array
+ *     with a repeated domain is cached as given and ContextKey.match()
+ *     compares a set size with a longer array length, as on trunk b138bbd1.
+ *     EXPECTED: "duplicates: repeated domain array interns to one cached
+ *     context" and "duplicates: repeated and distinct arrays share one
+ *     context" fail.
+ *     OBSERVED: not yet recorded.</li>
  * </ol>
+ *
+ * <p>The duplicate-domain scenario is expected to fail until create()
+ * removes repeated domains (or ContextKey.match() compares distinct
+ * domains rather than array length).  The VM's stack walk collapses only
+ * adjacent repeats, so an A, B, A call chain gives such an array.
  */
 public class ContextCacheCollisionTest {
 
@@ -145,6 +159,7 @@ public class ContextCacheCollisionTest {
         distinctHashesStayDistinct(0x5EC0C0E0, 0x5EC0C0E1);
         equalDomainsShareOneContext();
         emptyContextsShareOneContext();
+        duplicateDomainsShareOneContext(0x5EC0C0E2, 0x5EC0C0E3);
 
         if (failures > 0) {
             throw new RuntimeException(failures + " check(s) failed, see output");
@@ -266,6 +281,41 @@ public class ContextCacheCollisionTest {
 
         Reference.reachabilityFence(first);
         Reference.reachabilityFence(second);
+    }
+
+    /**
+     * A repeated domain carries no authority: a context is the intersection
+     * of its domains, and context equality already compares them as a set.
+     * An array with a repeated domain must therefore be served from the
+     * cache like any other, and must share its cached context with the same
+     * domains given once each.  It must also still evaluate as the same
+     * domains.
+     */
+    private static void duplicateDomainsShareOneContext(int hashA, int hashB) {
+        // FixedHashDomains, because TestPolicy grants every permission to
+        // every other domain: b must really lack SECRET for the last check.
+        ProtectionDomain a = new FixedHashDomain(hashA, permits(SECRET));
+        ProtectionDomain b = new FixedHashDomain(hashB, new Permissions());
+
+        AccessControlContext repeated =
+                AccessControlContext.create(new ProtectionDomain[] { a, b, a });
+        AccessControlContext repeatedAgain =
+                AccessControlContext.create(new ProtectionDomain[] { a, b, a });
+        AccessControlContext distinct =
+                AccessControlContext.create(new ProtectionDomain[] { a, b });
+
+        check("duplicates: repeated domain array interns to one cached context",
+                repeated == repeatedAgain);
+        check("duplicates: repeated and distinct arrays share one context",
+                repeated == distinct);
+        check("duplicates: repeated and distinct arrays are equal contexts",
+                repeated.equals(distinct));
+        check("duplicates: a domain without SECRET still denies it",
+                !implies(repeated, SECRET));
+
+        Reference.reachabilityFence(repeated);
+        Reference.reachabilityFence(repeatedAgain);
+        Reference.reachabilityFence(distinct);
     }
 
     private static PermissionCollection permits(Permission p) {

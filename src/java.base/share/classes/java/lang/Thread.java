@@ -1599,6 +1599,86 @@ public class Thread implements Runnable {
     }
 
     /**
+     * Not Java Standard API.  This solves the problem of creating a thread
+     * that has no permission and cannot be granted any permission by policy
+     * and cannot use Subject privileges, without giving it the context of
+     * the creating thread, or privileged context required to create a Platform
+     * thread.  This is useful for creating threads that are not privileged.
+     *
+     * Initializes a new platform {@code Thread} so that it has {@code task}
+     * as its run object, has the specified {@code name} as its name,
+     * belongs to the thread group referred to by {@code group}, has
+     * the specified {@code stackSize}, and inherits initial values for
+     * {@linkplain InheritableThreadLocal inheritable thread-local} variables
+     * if {@code inheritThreadLocals} is {@code true}.
+     *
+     * <p> This constructor is identical to {@link
+     * #Thread(ThreadGroup,Runnable,String,long)} with the added ability to
+     * suppress, or not, the inheriting of initial values for inheritable
+     * thread-local variables from the constructing thread. This allows for
+     * finer grain control over inheritable thread-locals. Care must be taken
+     * when passing a value of {@code false} for {@code inheritThreadLocals},
+     * as it may lead to unexpected behavior if the new thread executes code
+     * that expects a specific thread-local value to be inherited.
+     *
+     * <p> Specifying a value of {@code true} for the {@code inheritThreadLocals}
+     * parameter will cause this constructor to behave exactly like the
+     * {@code Thread(ThreadGroup, Runnable, String, long)} constructor.
+     *
+     * <p> For a non-null group, task, and name, invoking this constructor directly
+     * is equivalent to:
+     * <pre>{@code Thread.ofPlatform()
+     *      .group(group)
+     *      .name(name)
+     *      .stackSize(stackSize)
+     *      .inheritInheritableThreadLocals(inheritInheritableThreadLocals)
+     *      .unstarted(task); }</pre>
+     *
+     * @param  group
+     *         the thread group. If {@code null} and there is a security
+     *         manager, the group is determined by {@linkplain
+     *         SecurityManager#getThreadGroup SecurityManager.getThreadGroup()}.
+     *         If there is not a security manager or {@code
+     *         SecurityManager.getThreadGroup()} returns {@code null}, the group
+     *         is set to the current thread's thread group.
+     *
+     * @param  task
+     *         the object whose {@code run} method is invoked when this thread
+     *         is started. If {@code null}, this thread's run method is invoked.
+     *
+     * @param  name
+     *         the name of the new thread
+     *
+     * @param  stackSize
+     *         the desired stack size for the new thread, or zero to indicate
+     *         that this parameter is to be ignored
+     *
+     * @param  inheritInheritableThreadLocals
+     *         if {@code true}, inherit initial values for inheritable
+     *         thread-locals from the constructing thread, otherwise no initial
+     *         values are inherited
+     *
+     * @param  neverPrivileged if true uses a never privilged domain, that cannot
+     *         be granted any permission by policy and cannot use Subject privileges.
+     *
+     * @throws  SecurityException
+     *          if the current thread cannot create a thread in the specified
+     *          thread group
+     *
+     * @since 27
+     * @see <a href="#inheritance">Inheritance when creating threads</a>
+     */
+    protected Thread(ThreadGroup group, Runnable task, String name,
+                 long stackSize, boolean inheritInheritableThreadLocals,
+                 boolean neverPrivileged){
+                     this(group, checkName(name),
+                     (inheritInheritableThreadLocals ? 0 : NO_INHERIT_THREAD_LOCALS),
+                     task, stackSize, neverPrivileged ? AccessControlContext.neverPrivileged() : null,
+                     canCreatePlatformThread());
+
+    }
+
+    /**
      * Creates a virtual thread to execute a task and schedules it to execute.
      *
      * <p> This method is equivalent to:

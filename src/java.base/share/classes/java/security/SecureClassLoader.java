@@ -336,72 +336,78 @@ public class SecureClassLoader extends ClassLoader {
         PermissionCollection<Permission> perms = SecureClassLoader.this.getPermissions(cs);
         ProtectionDomain pd;
         DigestCodeSource digest = null;
-        if (sm != null) {
-            // SpiffeCredentialManager.getInstance() opens a SocketChannel which
-            // calls SelectorProvider.provider() → getSystemClassLoader().  During
-            // initPhase3 the system class loader is not yet ready, so defer the
-            // SPIFFE subject lookup until the VM is fully booted.
-            Subject sub = VM.isBooted() ? SpiffeCredentialManager.getInstance().getSubject() : null;
-            Principal[] pals = null;
-            if (sub != null && sub.isReadOnly()) {
-                Set<Principal> prin = sub.getPrincipals();
-                if (principals != null) {
-                    principals.addAll(prin);
-                    principals.addAll(Arrays.asList(p));
-                    prin = principals;
-                }
-                pals = prin.toArray(new Principal[0]);
+        // SpiffeCredentialManager.getInstance() opens a SocketChannel which
+        // calls SelectorProvider.provider() → getSystemClassLoader().  During
+        // initPhase3 the system class loader is not yet ready, so defer the
+        // SPIFFE subject lookup until the VM is fully booted.
+        Subject sub = VM.isBooted() ? SpiffeCredentialManager.getInstance().getSubject() : null;
+        Principal[] pals = null;
+        if (sub != null && sub.isReadOnly()) {
+            Set<Principal> prin = sub.getPrincipals();
+            if (principals != null) {
+                principals.addAll(prin);
+                principals.addAll(Arrays.asList(p));
+                prin = principals;
             }
-            pd = new ProtectionDomain(cs, perms, SecureClassLoader.this, pals);
-            if (cs.location != null) {
-                Permission checkURL;
-                String scheme = key.uri.getScheme();
-                if ("file".equals(scheme)){
-                    String host = key.uri.getHost();
-                    if (host != null && !host.isEmpty() && File.separatorChar == '\\' && key.uri.getUserInfo() == null
-                        && key.uri.getPort() == -1 && key.uri.getQuery() == null && key.uri.getFragment() == null) {
-                        // UNC path, e.g. file://host/share/file.txt
-                        String raw = key.uri.getRawPath();
-                        String lower = raw.toLowerCase(Locale.ROOT);
-                        if (lower.contains("%2f") || lower.contains("%5c") || lower.contains("%00"))
-                            throw new SecurityException("Codebase path contains an encoded separator or NUL: " + key.uri);
-                        checkURL = new FilePermission(new File("\\\\" + host + key.uri.getPath().replace('/', '\\')).getPath(), "read");
-                    } else {
-                        try {
-                            checkURL = new FilePermission(Uri.uriToFile(key.uri).getPath(), "read");
-                        } catch (IllegalArgumentException ex) {
-                            throw new SecurityException("Codebase is not a local file: " + key.uri, ex);
-                        }
-                    }
-                } else {
-                    checkURL = new URLPermission(key.uri.toString(), "GET:");
-                }
-                sm.checkPermission(checkURL,
-                        AccessControlContext.create(new ProtectionDomain[]{pd}, false));
-                // Promote plain CodeSource to DigestCodeSource by computing its
-                // content digest.  For jrt:/jmod: URIs DigestCodeSource walks
-                // every module entry via ModuleReader; for file: and remote URLs
-                // it reads the stream directly.  The algorithm is hard-coded to
-                // "SHA-256" for now; making it configurable is a planned follow-up.
-                try {
-                    digest = new DigestCodeSource(key.uri, key.certs, "SHA-256");
-                    perms = SecureClassLoader.this.getPermissions(digest);
-                } catch (IOException ex) {
-                    throw new SecurityException("Unable to contact URL: ", ex);
-                } catch (NoSuchAlgorithmException ex) {
-                    throw new SecurityException(
-                            "URL Provider not loaded or unknown algorithm: ", ex);
-                }
-                pd = new ProtectionDomain(digest, perms, SecureClassLoader.this, pals);
-                sm.checkPermission(LOAD_CLASS_ALLOW,
-                        AccessControlContext.create(new ProtectionDomain[]{pd}, false));
-            } else {
-                sm.checkPermission(LOAD_CLASS_ALLOW,
-                        AccessControlContext.create(new ProtectionDomain[]{pd}, false));
-            }
-        } else {
-            pd = new ProtectionDomain(cs, perms, SecureClassLoader.this, null);
+            pals = prin.toArray(new Principal[0]);
         }
+        pd = new ProtectionDomain(cs, perms, SecureClassLoader.this, pals);
+        if (cs.location != null) {
+            Permission checkURL = null;
+            String scheme = key.uri.getScheme();
+            if ("file".equals(scheme)){
+                String host = key.uri.getHost();
+                if (host != null && !host.isEmpty() && File.separatorChar == '\\' && key.uri.getUserInfo() == null
+                    && key.uri.getPort() == -1 && key.uri.getQuery() == null && key.uri.getFragment() == null) {
+                    // UNC path, e.g. file://host/share/file.txt
+                    String raw = key.uri.getRawPath();
+                    String lower = raw.toLowerCase(Locale.ROOT);
+                    if (lower.contains("%2f") || lower.contains("%5c") || lower.contains("%00")){
+                        if (sm != null) throw new SecurityException("Codebase path contains an encoded separator or NUL: " + key.uri);
+                        if (DebugHolder.debug != null) DebugHolder.debug.println("Codebase path contains an encoded separator or NUL: " + key.uri);
+                    }
+                    checkURL = new FilePermission(new File("\\\\" + host + key.uri.getPath().replace('/', '\\')).getPath(), "read");
+                } else {
+                    try {
+                        checkURL = new FilePermission(Uri.uriToFile(key.uri).getPath(), "read");
+                    } catch (IllegalArgumentException ex) {
+                        if (sm != null) throw new SecurityException("Codebase is not a local file: " + key.uri, ex);
+                        if (DebugHolder.debug != null) DebugHolder.debug.println("Codebase is not a local file: " + key.uri + ": " + ex);
+                    }
+                }
+            } else {
+                checkURL = new URLPermission(key.uri.toString(), "GET:");
+            }
+            if (sm != null) sm.checkPermission(checkURL,
+                    AccessControlContext.create(new ProtectionDomain[]{pd}, false));
+            // Promote plain CodeSource to DigestCodeSource by computing its
+            // content digest.  For jrt:/jmod: URIs DigestCodeSource walks
+            // every module entry via ModuleReader; for file: and remote URLs
+            // it reads the stream directly.  The algorithm is hard-coded to
+            // "SHA-256" for now; making it configurable is a planned follow-up.
+            try {
+                digest = new DigestCodeSource(key.uri, key.certs, "SHA-256");
+                perms = SecureClassLoader.this.getPermissions(digest);
+                pd = new ProtectionDomain(digest, perms, SecureClassLoader.this, pals);
+            } catch (NoSuchAlgorithmException ex) {
+                if (sm != null) throw new SecurityException(
+                        "URL Provider not loaded or unknown algorithm: ", ex);
+                if (DebugHolder.debug != null) DebugHolder.debug.println("digest unavailable for " + key.uri + ": " + ex);
+            } catch (IOException ex) {
+                if (sm != null) throw new SecurityException("Unable to contact URL: ", ex);
+                if (DebugHolder.debug != null) DebugHolder.debug.println("digest unavailable for " + key.uri + ": " + ex);
+            } catch (UnsupportedOperationException ex) {
+                // Ignore.
+            } catch (SecurityException ex) {
+                if (sm != null) throw ex;
+                if (DebugHolder.debug != null) DebugHolder.debug.println("digest unavailable for " + key.uri + ": " + ex);
+            }
+            if (sm != null) sm.checkPermission(LOAD_CLASS_ALLOW,
+                    AccessControlContext.create(new ProtectionDomain[]{pd}, false));
+        } else {
+            if (sm != null) sm.checkPermission(LOAD_CLASS_ALLOW,
+                   AccessControlContext.create(new ProtectionDomain[]{pd}, false));
+        }        
         if (DebugHolder.debug != null) {
             DebugHolder.debug.println(" getPermissions " + pd);
             DebugHolder.debug.println("");

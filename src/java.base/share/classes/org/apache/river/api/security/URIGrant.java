@@ -23,6 +23,7 @@ import java.io.ObjectInputStream;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.security.CodeSource;
+import java.security.DigestCodeSource;
 import java.security.Permission;
 import java.security.Principal;
 import java.security.PrivilegedExceptionAction;
@@ -135,21 +136,10 @@ class URIGrant extends CertificateGrant {
         // see org.apache.river.test.spec.policyprovider.dynamicPolicyProvider.GrantPrincipal test.
         if (codeSource == null)  return false; // Null CodeSource is not implied.
         if (location.isEmpty()) return true; // But CodeSource with null URL is implied, if this location is empty.
-        int l = location.size();
-        Uri[] uris = location.toArray(new Uri[l]);
-        for (int i = 0; i<l ; i++ ){
-            if (uris[i] == null) return true;
-        }
-        URL url = codeSource.getLocation();
-        if (url == null ) return false;
-        Uri implied = null;
-        try {
-            implied = Uri.urlToUri(url);
-        } catch (URISyntaxException ex) {
-            System.getLogger(URIGrant.class.getName()).log(Level.DEBUG, "Implies check failed", ex);
-        }
-        for (int i = 0; i<l ; i++){
-            if (uris[i].implies(implied)) return true;
+        if (location.contains(null)) return true; // Null URI implies any CodeSource with non-null URL.))
+        Uri implied = (Uri) codeSource.getUriLocation();
+        for (Uri uri : location){
+            if (uri.implies(implied)) return true;
         }
         return false;
     }
