@@ -76,6 +76,7 @@ import au.zeus.jdk.authorization.sm.CombinerSecurityManager;
 import au.zeus.jdk.authorization.policy.ConcurrentPolicyFile;
 import au.zeus.jdk.authorization.policy.PermissionComparator;
 import au.zeus.jdk.authorization.policy.PolicyUtils;
+import au.zeus.jdk.authorization.policy.CodeSourceKey;
 
 /**
  * This SecurityManager can be used in a simulation environment to generate
@@ -364,7 +365,11 @@ public class SecurityPolicyWriter extends CombinerSecurityManager{
         // time -- it is gone by shutdown): stable policy denies AND a one-shot grant
         // allows. Observe-only still allows the operation; it is simply not recorded.
         if (!pd.implies(p) && pd.impliesEphemeral(p)) return true;
-        pd = new ProtectionDomainKey(pd);
+        try{
+            pd = new ProtectionDomainKey(pd);
+        } catch (URISyntaxException ex) {
+            getLogger().log(Level.ERROR, "Unable to create ProtectionDomainKey", ex);
+        }
 	Collection<Permission> perms = domainPermissions.get(pd);
 	    if (perms == null) {
 		perms = new ConcurrentSkipListSet<Permission>(new PermissionComparator());
@@ -695,31 +700,19 @@ public class SecurityPolicyWriter extends CombinerSecurityManager{
      */
     private static class ProtectionDomainKey extends ProtectionDomain{
 
-        private static UriCodeSource getUriCodeSource(ProtectionDomain pd){
-            if (pd == null) return null; // privileged system code.
-            CodeSource cs = pd.getCodeSource();
-            if (cs != null) return new UriCodeSource(cs);
-            return null;
-        }
-
-        private final CodeSource codeSource;       // UriCodeSource — used for equals/hashCode only
-        private final CodeSource originalCodeSource; // original (possibly DigestCodeSource) — returned by getCodeSource()
+        private final CodeSourceKey csKey;          // null for system code
         private final Principal[] princiPals;
         private final int hashCode;
 
-        ProtectionDomainKey(ProtectionDomain pd){
-            this(getUriCodeSource(pd), pd.getCodeSource(), pd.getPermissions(), pd.getPrincipals());
+        ProtectionDomainKey(ProtectionDomain pd) throws URISyntaxException {
+            this(new CodeSourceKey(pd.getCodeSource()), pd.getPermissions(), pd.getPrincipals());
         }
 
-        ProtectionDomainKey(UriCodeSource urics, CodeSource original, PermissionCollection<? extends Permission> perms, Principal [] p){
-            super(urics, perms, null, p);
-            this.codeSource = urics;
-            this.originalCodeSource = original;
+        private ProtectionDomainKey(CodeSourceKey csKey, PermissionCollection<? extends Permission> perms, Principal [] p){
+            super(csKey != null ? csKey.getCodeSource() : null, perms, null, p);
             this.princiPals = p;
-            int hash = 7;
-            hash = 29 * hash + Objects.hashCode(this.codeSource);
-            hash = 29 * hash + Arrays.deepHashCode(this.princiPals);
-            this.hashCode = hash;
+            this.csKey = csKey;
+            this.hashCode = 29 * (29 * 7 + Objects.hashCode(csKey)) + Arrays.deepHashCode(princiPals);
         }
 
         /**
@@ -727,17 +720,14 @@ public class SecurityPolicyWriter extends CombinerSecurityManager{
          * not the UriCodeSource wrapper used internally for equality checks.
          */
         CodeSource originalCodeSource() {
-            return originalCodeSource;
+            return csKey != null ? csKey.getCodeSource() : null;
         }
 
         @Override
-        public boolean equals(Object obj) {
-            if (this == obj) return true;
-            if (obj == null) return false;
-            if (getClass() != obj.getClass()) return false;
-            final ProtectionDomainKey other = (ProtectionDomainKey) obj;
-            if (!Objects.equals(this.codeSource, other.codeSource)) return false;
-            return Arrays.deepEquals(this.princiPals, other.princiPals);
+        public boolean equals(Object o) {
+            return o instanceof ProtectionDomainKey k
+                && Objects.equals(csKey, k.csKey)
+                && Arrays.deepEquals(princiPals, k.princiPals);
         }
 
         @Override

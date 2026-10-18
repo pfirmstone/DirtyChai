@@ -138,7 +138,7 @@ class DigestGrant extends URIGrant {
         if (!(codeSource instanceof DigestCodeSource dcs)) return false;
         if (!stringsEqual(digestAlgorithm, dcs.getDigestAlgorithm())) return false;
         if (!Arrays.equals(digest, dcs.getDigest())) return false;
-        return true;
+        return impliesSigners(codeSource);
     }
 
     @Override

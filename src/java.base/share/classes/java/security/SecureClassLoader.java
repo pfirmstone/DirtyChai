@@ -26,6 +26,7 @@
 package java.security;
 
 import au.zeus.jdk.authorization.guards.LoadClassPermission;
+import au.zeus.jdk.authorization.policy.CodeSourceKey;
 import au.zeus.jdk.authorization.spire.SpiffeCredentialManager;
 import au.zeus.jdk.net.Uri;
 import java.io.FilePermission;
@@ -354,29 +355,29 @@ public class SecureClassLoader extends ClassLoader {
         pd = new ProtectionDomain(cs, perms, SecureClassLoader.this, pals);
         if (cs.location != null) {
             Permission checkURL = null;
-            String scheme = key.uri.getScheme();
+            String scheme = key.getUri().getScheme();
             if ("file".equals(scheme)){
-                String host = key.uri.getHost();
-                if (host != null && !host.isEmpty() && File.separatorChar == '\\' && key.uri.getUserInfo() == null
-                    && key.uri.getPort() == -1 && key.uri.getQuery() == null && key.uri.getFragment() == null) {
+                String host = key.getUri().getHost();
+                if (host != null && !host.isEmpty() && File.separatorChar == '\\' && key.getUri().getUserInfo() == null
+                    && key.getUri().getPort() == -1 && key.getUri().getQuery() == null && key.getUri().getFragment() == null) {
                     // UNC path, e.g. file://host/share/file.txt
-                    String raw = key.uri.getRawPath();
+                    String raw = key.getUri().getRawPath();
                     String lower = raw.toLowerCase(Locale.ROOT);
                     if (lower.contains("%2f") || lower.contains("%5c") || lower.contains("%00")){
-                        if (sm != null) throw new SecurityException("Codebase path contains an encoded separator or NUL: " + key.uri);
-                        if (DebugHolder.debug != null) DebugHolder.debug.println("Codebase path contains an encoded separator or NUL: " + key.uri);
+                        if (sm != null) throw new SecurityException("Codebase path contains an encoded separator or NUL: " + key.getUri());
+                        if (DebugHolder.debug != null) DebugHolder.debug.println("Codebase path contains an encoded separator or NUL: " + key.getUri());
                     }
-                    checkURL = new FilePermission(new File("\\\\" + host + key.uri.getPath().replace('/', '\\')).getPath(), "read");
+                    checkURL = new FilePermission(new File("\\\\" + host + key.getUri().getPath().replace('/', '\\')).getPath(), "read");
                 } else {
                     try {
-                        checkURL = new FilePermission(Uri.uriToFile(key.uri).getPath(), "read");
+                        checkURL = new FilePermission(Uri.uriToFile(key.getUri()).getPath(), "read");
                     } catch (IllegalArgumentException ex) {
-                        if (sm != null) throw new SecurityException("Codebase is not a local file: " + key.uri, ex);
-                        if (DebugHolder.debug != null) DebugHolder.debug.println("Codebase is not a local file: " + key.uri + ": " + ex);
+                        if (sm != null) throw new SecurityException("Codebase is not a local file: " + key.getUri(), ex);
+                        if (DebugHolder.debug != null) DebugHolder.debug.println("Codebase is not a local file: " + key.getUri() + ": " + ex);
                     }
                 }
             } else {
-                checkURL = new URLPermission(key.uri.toString(), "GET:");
+                checkURL = new URLPermission(key.getUri().toString(), "GET:");
             }
             if (sm != null) sm.checkPermission(checkURL,
                     AccessControlContext.create(new ProtectionDomain[]{pd}, false));
@@ -386,21 +387,21 @@ public class SecureClassLoader extends ClassLoader {
             // it reads the stream directly.  The algorithm is hard-coded to
             // "SHA-256" for now; making it configurable is a planned follow-up.
             try {
-                digest = new DigestCodeSource(key.uri, key.certs, "SHA-256");
+                digest = new DigestCodeSource(key.getUri(), key.getCertificates(), "SHA-256");
                 perms = SecureClassLoader.this.getPermissions(digest);
                 pd = new ProtectionDomain(digest, perms, SecureClassLoader.this, pals);
             } catch (NoSuchAlgorithmException ex) {
                 if (sm != null) throw new SecurityException(
                         "URL Provider not loaded or unknown algorithm: ", ex);
-                if (DebugHolder.debug != null) DebugHolder.debug.println("digest unavailable for " + key.uri + ": " + ex);
+                if (DebugHolder.debug != null) DebugHolder.debug.println("digest unavailable for " + key.getUri() + ": " + ex);
             } catch (IOException ex) {
                 if (sm != null) throw new SecurityException("Unable to contact URL: ", ex);
-                if (DebugHolder.debug != null) DebugHolder.debug.println("digest unavailable for " + key.uri + ": " + ex);
+                if (DebugHolder.debug != null) DebugHolder.debug.println("digest unavailable for " + key.getUri() + ": " + ex);
             } catch (UnsupportedOperationException ex) {
                 // Ignore.
             } catch (SecurityException ex) {
                 if (sm != null) throw ex;
-                if (DebugHolder.debug != null) DebugHolder.debug.println("digest unavailable for " + key.uri + ": " + ex);
+                if (DebugHolder.debug != null) DebugHolder.debug.println("digest unavailable for " + key.getUri() + ": " + ex);
             }
             if (sm != null) sm.checkPermission(LOAD_CLASS_ALLOW,
                     AccessControlContext.create(new ProtectionDomain[]{pd}, false));
@@ -417,70 +418,20 @@ public class SecureClassLoader extends ClassLoader {
         return pd;
     }
 
-    private static class CodeSourceKey {
-        
-        private final Uri uri;
-        private final java.security.cert.Certificate [] certs;
-         // Populated only when the incoming CodeSource is a DigestCodeSource.
-        private final String digestAlgorithm;
-        private final byte[] digest;
-        private final int hashCode;
-        final CodeSource cs; // package-private: used by resetArchivedStates
-        
-        private CodeSourceKey(CodeSource cs) throws URISyntaxException {
-            this.cs = cs;
-            certs = cs.getCertificates();
-            this.uri = cs.getLocation() != null ? Uri.urlToUri(cs.getLocation()) : null;
-            if (cs instanceof DigestCodeSource dcs) {
-                this.digestAlgorithm = dcs.getDigestAlgorithm();
-                this.digest = dcs.getDigest();   // defensive copy already made by getDigest()
-            } else {
-                this.digestAlgorithm = null;
-                this.digest = null;
-            }
-            int hash = 7;
-            hash = 23 * hash + (uri != null ? uri.hashCode() :0);
-            hash = 23 * hash + (certs != null ? Arrays.hashCode(certs) : 0);
-            hash = 23 * hash + (digestAlgorithm != null ? digestAlgorithm.hashCode() : 0);
-            hash = 23 * hash + Arrays.hashCode(digest);
-            hashCode = hash; // 7 if everything is null;
-        }
-
-        @Override
-        public int hashCode() {
-            return hashCode;
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (!(o instanceof CodeSourceKey that)) return false;
-            // URI equality (RFC 3986, no DNS): handles null on both sides.
-            if (uri == null ? that.uri != null : !uri.equals(that.uri)) return false;
-            // Certificate equality.
-            if (!Arrays.equals(certs, that.certs)) return false;
-            // Digest equality: a plain-CS key (null digest) is NOT equal to a
-            // DigestCS key (non-null digest) — they represent different identities.
-            if (digestAlgorithm == null ? that.digestAlgorithm != null
-                                        : !digestAlgorithm.equals(that.digestAlgorithm)) return false;
-            return Arrays.equals(digest, that.digest);
-        }
-    }
-
     /**
      * Called by the VM, during -Xshare:dump
      */
     private void resetArchivedStates() {
         if (CDS.isDumpingAOTLinkedClasses()) {
             for (CodeSourceKey key : pdcache.keySet()) {
-                if (key.cs.getCodeSigners() != null) {
+                if (key.getCodeSource().getCodeSigners() != null) {
                     // We don't archive any signed classes, so we don't need to cache their ProtectionDomains.
                     pdcache.remove(key);
                 }
             }
             if (System.getProperty("cds.debug.archived.protection.domains") != null) {
                 for (CodeSourceKey key : pdcache.keySet()) {
-                    System.out.println("Archiving ProtectionDomain " + key.cs + " for " + this);
+                    System.out.println("Archiving ProtectionDomain " + key.getCodeSource() + " for " + this);
                 }
             }
         } else {

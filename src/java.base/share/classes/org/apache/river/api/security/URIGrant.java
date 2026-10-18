@@ -114,6 +114,7 @@ class URIGrant extends CertificateGrant {
     @Override
     public boolean implies(ClassLoader cl, Principal[] p){
 	if ( !implies(p)) return false;
+    if (!certs.isEmpty()) return false;    // a class loader carries no signers
 	if ( location.isEmpty() ) return true;
         Iterator<Uri> it = location.iterator();
         while (it.hasNext()){
@@ -135,6 +136,7 @@ class URIGrant extends CertificateGrant {
         // sun.security.provider.PolicyFile compatibility for null CodeSource is false.
         // see org.apache.river.test.spec.policyprovider.dynamicPolicyProvider.GrantPrincipal test.
         if (codeSource == null)  return false; // Null CodeSource is not implied.
+        if (!impliesSigners(codeSource)) return false;
         if (location.isEmpty()) return true; // But CodeSource with null URL is implied, if this location is empty.
         if (location.contains(null)) return true; // Null URI implies any CodeSource with non-null URL.))
         Uri implied = (Uri) codeSource.getUriLocation();

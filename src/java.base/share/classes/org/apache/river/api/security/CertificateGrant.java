@@ -120,11 +120,7 @@ class CertificateGrant extends PrincipalGrant {
     @Override
     public boolean implies(CodeSource codeSource, Principal[] p) {
         if ( !implies(p)) return false;
-        if ( codeSource == null ) return false;
-	if ( certs.isEmpty() ) return true;
-	Certificate[] signers = codeSource.getCertificates();
-	List<Certificate> certificates = Arrays.asList(signers);
-        return certificates.containsAll(certs);
+        return impliesSigners(codeSource);
     }
     
     @Override
@@ -132,6 +128,14 @@ class CertificateGrant extends PrincipalGrant {
 	if (!(grant instanceof CertificateGrant)) return false;
 	if (!super.impliesEquivalent(grant)) return false;
 	return certs.equals(((CertificateGrant)grant).certs);
+    }
+    
+    final boolean impliesSigners(CodeSource cs) {
+        if (cs == null) return false;
+        if (certs.isEmpty()) return true;
+        Certificate[] signers = cs.getCertificates();
+        if (signers == null || signers.length == 0) return false;
+        return Arrays.asList(signers).containsAll(certs);
     }
     
     @Override
