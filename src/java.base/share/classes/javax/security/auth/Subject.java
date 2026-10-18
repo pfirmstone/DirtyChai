@@ -485,7 +485,7 @@ public sealed class Subject permits WorkerSubject, UserSubject {
      * — grants that require the presence of specific {@code Principal}s will apply
      * only when a matching {@code Subject} is current.
      *
-     * <p> Unlike {@link #doAs(Subject, PrivilegedAction)}, this method does not
+     * <p> This method does not
      * establish a privileged execution boundary; no {@code AccessControlContext}
      * snapshot is taken and the current subject is carried as a
      * {@link ScopedValue} for the duration of {@code action}, remaining
@@ -502,13 +502,13 @@ public sealed class Subject permits WorkerSubject, UserSubject {
      *
      * <strong>Thread propagation</strong>
      *
-     * <p> Any threads spawned during the execution of {@code action} will
+     * <p> Any VirtualThread spawned during the execution of {@code action} will
      * inherit the current subject, which is re-established as a
-     * {@link ScopedValue} binding for the duration of the spawned thread's
+     * {@link ScopedValue} binding for the duration of the spawned VirtualThread's
      * task. This ensures that principal-scoped policy grants apply consistently
-     * to child threads without requiring explicit propagation by the caller.
-     * The inherited subject is active for exactly the lifetime of the spawned
-     * task and cannot leak beyond it.
+     * to child VirtualThreads without requiring explicit propagation by the caller.
+     *
+     * The inherited subject is active for exactly the lifetime of the spawned VirtualThread.
      *
      * <p> Note that this propagation behaviour differs from the OpenJDK
      * reference implementation, in which the user {@code Subject} established
