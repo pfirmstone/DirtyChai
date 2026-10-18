@@ -55,6 +55,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -171,9 +172,11 @@ public class SecurityPolicyWriter extends CombinerSecurityManager{
     private static final Object keyStoreLock = new Object();
     private final ConcurrentMap<Certificate,String> aliases;
     private final Cert certFunc;
-    private final Map<String,String> pathReplacements;
+    private final List<Entry<String,String>> replacements;   // longest value first
     private final String hostname;
     private final String tmpDir;
+    private final String ephemeralPorts = System.getProperty("polpAudit.ephemeralPorts", "32768-65535");
+    private final int ephemeralLow, ephemeralHigh;   // parsed from ephemeralPorts
     
     @SuppressWarnings("deprecation")
     private SecurityPolicyWriter(
@@ -222,7 +225,9 @@ public class SecurityPolicyWriter extends CombinerSecurityManager{
                 paths.put(((String) value).replace('\\', '/'), (String) key);
             }
         }
-        pathReplacements = paths;
+        List<Entry<String,String>> r = new ArrayList<>(paths.entrySet());
+        r.sort((a, b) -> Integer.compare(b.getKey().length(), a.getKey().length()));
+        replacements = r;
         String policy = System.getProperty("java.security.policy");
         // One policy file only ==
         if (policy.startsWith("=")) policy= policy.substring(1);
@@ -269,6 +274,21 @@ public class SecurityPolicyWriter extends CombinerSecurityManager{
             getLogger().log(Level.ERROR, "Unable to create Policy instance", ex);
         }
         POLICY = polcy;
+        int lo = 32768, hi = 65535;
+        String spec = ephemeralPorts.trim();
+        int dash = spec.indexOf('-');
+        try {
+            if (dash > 0) {
+                lo = Integer.parseInt(spec.substring(0, dash).trim());
+                String h = spec.substring(dash + 1).trim();
+                hi = h.isEmpty() ? 65535 : Integer.parseInt(h);
+            }
+        } catch (NumberFormatException e) {
+            getLogger().log(Level.WARNING, "Ignoring polpAudit.ephemeralPorts=" + spec + "; using 32768-65535");
+            lo = 32768; hi = 65535;
+        }
+        if (lo < 1 || hi > 65535 || lo > hi) { lo = 32768; hi = 65535; }
+        ephemeralLow = lo; ephemeralHigh = hi;
     } 
     
     public SecurityPolicyWriter() {
@@ -400,169 +420,176 @@ public class SecurityPolicyWriter extends CombinerSecurityManager{
 //                      ...
 //                  };
 
-                
+                    StringBuilder grant = new StringBuilder(1024);
+                    Set<String> written = new HashSet<>();// to avoid duplicate permission lines in a grant block
                     Iterator<Entry<ProtectionDomain,Collection<Permission>>> it 
                             = domainPermissions.entrySet().iterator();
                     while (it.hasNext()){
+                        grant.setLength(0);
+                        written.clear();
                         Entry<ProtectionDomain,Collection<Permission>> entry = it.next();
-                        ProtectionDomain pd = entry.getKey();
-                        Collection<Permission> perms = entry.getValue();
-                        Collection<Permission> permsToPrint = new ArrayList<Permission>();
-                        PermissionCollection<Permission> pc = new Permissions();
-                        Iterator<Permission> pIt = perms.iterator();
-                        while (pIt.hasNext()){
-                            Permission p = pIt.next();
-                            if (POLICY != null && POLICY.implies(pd, p) || pc.implies(p)) continue;
-                            pc.add(p);
-                            permsToPrint.add(p);
-                        }
-                        if (permsToPrint.isEmpty()) continue;
-                        CodeSource cs = null; 
-                        Principal [] principals = null;
                         try {
-                            cs = (pd instanceof ProtectionDomainKey pdk)
-                                    ? pdk.originalCodeSource()
-                                    : pd.getCodeSource();
-                            principals = pd.getPrincipals();
-                        } catch (NullPointerException e){
-                            // On some occassions ProtectionDomain hasn't been
-                            // safely published.
-                            System.err.println(
-                                "ProtectionDomain wasn't safely published: " 
-                                + pd.toString()
-                            );
-                        }
-                        // Delegate tasks to an executor so we don't cause recursive calls / stack overflow.		    
-                        if (cs != null){
-                            Certificate [] signers = cs.getCertificates();
-                            if (signers != null && signers.length > 0){
-                                 if (keyStore() != null){
-                                    for (int i=0, l=signers.length; i<l; i++){
-                                        aliases.computeIfAbsent(signers[i], certFunc);
-                                    }
-                                }
+                            ProtectionDomain pd = entry.getKey();
+                            Collection<Permission> perms = entry.getValue();
+                            Collection<Permission> permsToPrint = new ArrayList<Permission>();
+                            PermissionCollection<Permission> pc = new Permissions();
+                            Iterator<Permission> pIt = perms.iterator();
+                            while (pIt.hasNext()){
+                                Permission p = pIt.next();
+                                if (POLICY != null && POLICY.implies(pd, p) || pc.implies(p)) continue;
+                                pc.add(p);
+                                permsToPrint.add(p);
                             }
-                        }
-                        if (cs != null || (principals != null && principals.length > 0)){
-                            URL codebase = cs != null ? cs.getLocation() : null;
-                            pw.print("grant ");
-                            if (keyStore != null){
-                                Certificate [] signers = cs != null ? cs.getCertificates() : null;
-                                if (signers != null && signers.length > 0) {
-                                    List<String> alia = new ArrayList<String>(signers.length);
-                                    for (int i=0, l=signers.length; i<l; i++){
-                                        alia.add(aliases.get(signers[i]));
-                                    }
-                                    if (!alia.isEmpty()){
-                                        pw.print("signedBy \"");
-                                        for (int i=0, l=alia.size(); i<l; i++){
-                                           if (i != 0) pw.print(",");
-                                           pw.print(alia.get(i));
+                            if (permsToPrint.isEmpty()) continue;
+                            CodeSource cs = null; 
+                            Principal [] principals = null;
+                            try {
+                                cs = (pd instanceof ProtectionDomainKey pdk)
+                                        ? pdk.originalCodeSource()
+                                        : pd.getCodeSource();
+                                principals = pd.getPrincipals();
+                            } catch (NullPointerException e){
+                                // On some occassions ProtectionDomain hasn't been
+                                // safely published.
+                                System.err.println(
+                                    "ProtectionDomain wasn't safely published: " 
+                                    + pd.toString()
+                                );
+                            }
+                            // Delegate tasks to an executor so we don't cause recursive calls / stack overflow.		    
+                            if (cs != null){
+                                Certificate [] signers = cs.getCertificates();
+                                if (signers != null && signers.length > 0){
+                                     if (keyStore() != null){
+                                        for (int i=0, l=signers.length; i<l; i++){
+                                            aliases.computeIfAbsent(signers[i], certFunc);
                                         }
-                                        pw.print("\", ");
-                                        pw.print("\n");
                                     }
                                 }
                             }
-                            if (codebase != null){
-                                pw.print("codebase \"");
-                                String codebaseStr = replaceValuesWithProperties(codebase.toString());
-                                pw.print(codebaseStr);
-                                pw.print("\"");
-                                boolean hasDigest = cs instanceof DigestCodeSource dcs
-                                        && dcs.getDigestAlgorithm() != null
-                                        && dcs.getDigest() != null;
-                                boolean hasPrincipals = principals != null
-                                        && principals.length > 0;
-                                if (hasDigest || hasPrincipals) pw.print(",");
-                                pw.print("\n");
-                            }
-                            // Emit digest clause for DigestCodeSource.
-                            if (cs instanceof DigestCodeSource dcs) {
-                                String algorithm = dcs.getDigestAlgorithm();
-                                byte[] digestBytes = dcs.getDigest();
-                                if (algorithm != null && digestBytes != null) {
-                                    pw.print("    digest \"");
-                                    pw.print(algorithm);
-                                    pw.print(':');
-                                    pw.print(hexEncode(digestBytes));
-                                    pw.print("\"");
-                                    if (principals != null && principals.length > 0) pw.print(",");
-                                    pw.print("\n");
+                            if (cs != null || (principals != null && principals.length > 0)){
+                                URL codebase = cs != null ? cs.getLocation() : null;
+                                grant.append("grant ");
+                                if (keyStore != null){
+                                    Certificate [] signers = cs != null ? cs.getCertificates() : null;
+                                    if (signers != null && signers.length > 0) {
+                                        List<String> alia = new ArrayList<String>(signers.length);
+                                        for (int i=0, l=signers.length; i<l; i++){
+                                            alia.add(aliases.get(signers[i]));
+                                        }
+                                        if (!alia.isEmpty()){
+                                            grant.append("signedBy \"");
+                                            for (int i=0, l=alia.size(); i<l; i++){
+                                               if (i != 0) grant.append(",");
+                                               grant.append(alia.get(i));
+                                            }
+                                            grant.append("\", ");
+                                            grant.append("\n");
+                                        }
+                                    }
                                 }
-                            }
-                            // Emit principal clauses.
-                            if (principals != null && principals.length > 0) {
-                                for (int i = 0; i < principals.length; i++) {
-                                    pw.print("    principal ");
-                                    pw.print(principals[i].getClass().getCanonicalName());
-                                    pw.print(" \"");
-                                    pw.print(principals[i].getName());
-                                    pw.print("\"");
-                                    if (i < principals.length - 1) pw.print(",");
-                                    pw.print("\n");
+                                if (codebase != null){
+                                    grant.append("codebase \"");
+                                    String codebaseStr = replaceValuesWithProperties(codebase.toString());
+                                    grant.append(codebaseStr);
+                                    grant.append("\"");
+                                    boolean hasDigest = cs instanceof DigestCodeSource dcs
+                                            && dcs.getDigestAlgorithm() != null
+                                            && dcs.getDigest() != null;
+                                    boolean hasPrincipals = principals != null
+                                            && principals.length > 0;
+                                    if (hasDigest || hasPrincipals) grant.append(",");
+                                    grant.append("\n");
                                 }
+                                // Emit digest clause for DigestCodeSource.
+                                if (cs instanceof DigestCodeSource dcs) {
+                                    String algorithm = dcs.getDigestAlgorithm();
+                                    byte[] digestBytes = dcs.getDigest();
+                                    if (algorithm != null && digestBytes != null) {
+                                        grant.append("    digest \"");
+                                        grant.append(algorithm);
+                                        grant.append(':');
+                                        grant.append(hexEncode(digestBytes));
+                                        grant.append("\"");
+                                        if (principals != null && principals.length > 0) grant.append(",");
+                                        grant.append("\n");
+                                    }
+                                }
+                                // Emit principal clauses.
+                                if (principals != null && principals.length > 0) {
+                                    for (int i = 0; i < principals.length; i++) {
+                                        grant.append("    principal ");
+                                        grant.append(principals[i].getClass().getCanonicalName());
+                                        grant.append(" \"");
+                                        grant.append(escape(principals[i].getName()));
+                                        grant.append("\"");
+                                        if (i < principals.length - 1) grant.append(",");
+                                        grant.append("\n");
+                                    }
+                                }
+                            } else {
+                                // No codebase and no principals: emit a bare "grant" block
+                                // that applies to all code regardless of origin.
+                                grant.append("grant\n");
                             }
-                        } else {
-                            // No codebase and no principals: emit a bare "grant" block
-                            // that applies to all code regardless of origin.
-                            pw.print("grant\n");
-                        }
-                        pw.print("{\n");
+                            grant.append("{\n");
 
-                        Iterator<Permission> permIt = permsToPrint.iterator();
-                        while (permIt.hasNext()){
-                            Permission p = permIt.next();
-                            pw.print("    permission ");
-                            pw.print(p.getClass().getCanonicalName());
-                            pw.print(" \"");
-                            if (p instanceof PrivateCredentialPermission){
-                                PrivateCredentialPermission pcp = (PrivateCredentialPermission) p;
-                                String credential = pcp.getCredentialClass();
-                                String [][] princpals = pcp.getPrincipals();
-                                StringBuilder sb = new StringBuilder();
-                                sb.append(credential);
-                                sb.append(" ");
-                                for (int i=0,l=princpals.length; i<l; i++){
-                                    String [] pals = princpals [i];
-                                    for (int j=0,m=pals.length; j<m; j++){
-                                        sb.append(pals[j]);
-                                        if (j < m-1) sb.append(" \\\"");
-                                        else sb.append("\\\"");
-                                    }
-                                    if (i < l-1) sb.append(" ");
-                                }
-                                pw.print(sb.toString());
-                            } else {
-                                /* Some complex permissions have quoted strings embedded or
-                                literal carriage returns that must be escaped.  */
-                                String name = p.getName();
-                                if (p instanceof FilePermission){
-                                    if (name.contains(tmpDir)){
-                                        name = tmpDir + "${/}-";
+                            Iterator<Permission> permIt = permsToPrint.iterator();
+                            while (permIt.hasNext()) {
+                                Permission p = permIt.next();
+                                StringBuilder line = new StringBuilder(128);
+                                try {
+                                    line.append("    permission ").append(p.getClass().getCanonicalName()).append(" \"");
+                                    if (p instanceof PrivateCredentialPermission pcp) {
+                                        String credential = pcp.getCredentialClass();
+                                        String [][] princpals = pcp.getPrincipals();
+                                        line.append(credential);
+                                        line.append(" ");
+                                        for (int i=0,l=princpals.length; i<l; i++){
+                                            String [] pals = princpals [i];
+                                            for (int j=0,m=pals.length; j<m; j++){
+                                                line.append(pals[j]);
+                                                if (j < m-1) line.append(" \\\"");
+                                                else line.append("\\\"");
+                                            }
+                                            if (i < l-1) line.append(" ");
+                                        }
                                     } else {
-                                        name = replaceValuesWithProperties(name);
+                                        /* Some complex permissions have quoted strings embedded or
+                                        literal carriage returns that must be escaped.  */
+                                        String name = p.getName();
+                                        if (p instanceof FilePermission) {
+                                            if (name.contains(tmpDir)) {
+                                                name = "${java.io.tmpdir}${/}-";
+                                            } else {
+                                                name = replaceValuesWithProperties(name).replace("/", "${/}");
+                                            }
+                                        } else if (p instanceof SocketPermission) {
+                                            name = socketName(name); 
+                                            if (hostname != null) name = name.replace(hostname, "${HOST}");
+                                        } else if (p instanceof URLPermission) {
+                                            if (hostname != null) name = name.replace(hostname, "${HOST}");
+                                        }
+                                        line.append(escape(name));
                                     }
-                                    name = name.replace("/", "${/}");
-                                } else if (p instanceof SocketPermission || p instanceof URLPermission){
-                                    if (hostname != null) name = name.replace(hostname, "${HOST}");
-                                } else {
-                                    name = name.replace("\\\"", "\\\\\"").replace("\"","\\\"").replace("\r","\\\r");
+                                    String actions = p.getActions();
+                                    if (actions != null && !actions.isEmpty()) {
+                                        line.append("\", \"").append(escape(actions));
+                                    }
+                                    line.append("\";\n");
+                                    String text = line.toString();
+                                    if (written.add(text)) grant.append(text);
+                                } catch (RuntimeException ex) {
+                                    grant.append("    // not recorded: " + oneLine(p.getClass().getName() + " " + p.getName()) + " (" + oneLine(ex.toString()) + ")\n");
+                                    getLogger().log(Level.ERROR, "Unable to write permission to policy file", ex);
                                 }
-                                pw.print(name);
                             }
-                            String actions = p.getActions();
-                            if (actions != null && !"".equals(actions)){
-                                pw.print("\", \"");
-                                pw.print(actions);
-                                pw.print("\"");
-                            } else {
-                                pw.print("\"");
-                            }
-                            // REMIND signedBy?
-                            pw.print(";\n");
+                            grant.append("};\n\n");
+                            pw.write(grant.toString());
+                        } catch (RuntimeException ex) {
+                            pw.write("// grant not recorded: " + oneLine(String.valueOf(entry.getKey())) + " (" + oneLine(ex.toString()) + ")\n\n");
+                            getLogger().log(Level.ERROR, "Unable to write grant to policy file", ex);
                         }
-                        pw.print("};\n\n");
                     }
                     getLogger().log(Level.INFO, "Finished writing additional permissions, if any, to policy file.");
                 } catch (IOException ex) {
@@ -590,18 +617,14 @@ public class SecurityPolicyWriter extends CombinerSecurityManager{
     
     private String replaceValuesWithProperties(String s){
         s = s.replace('\\', '/');
-        Set<Entry<String,String>> pathSet = pathReplacements.entrySet();
-        Iterator<Entry<String,String>> pathIt = pathSet.iterator();
-        while (pathIt.hasNext()){
-            Entry<String,String> path = pathIt.next();
-            StringBuilder sb = new StringBuilder();
+        for (Entry<String,String> path : replacements) {
             String value = path.getValue();
-            sb.append("${").append(value).append("}");
             String key = path.getKey();
-            s = s.replace(key, sb.toString());
-            if ("java.io.tmpdir".equals(value) && key.endsWith("/") ){
+            String prop = "${" + value + "}";
+            s = s.replace(key, prop);
+            if ("java.io.tmpdir".equals(value) && key.endsWith("/")) {
                 getLogger().log(Level.INFO, "temp directory: {0}", s);
-                s = s.replace(key.substring(0, key.length()-1), sb.toString());
+                s = s.replace(key.substring(0, key.length() - 1), prop);
             }
         }
         return s;
@@ -615,6 +638,42 @@ public class SecurityPolicyWriter extends CombinerSecurityManager{
             sb.append(Character.forDigit(b & 0xF, 16));
         }
         return sb.toString();
+    }
+
+    private static String escape(String s) {
+        StringBuilder sb = new StringBuilder(s.length() + 8);
+        for (int i = 0, n = s.length(); i < n; i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '\\' -> sb.append("\\\\");
+                case '"'  -> sb.append("\\\"");
+                case '\r' -> sb.append("\\r");
+                case '\n' -> sb.append("\\n");
+                default   -> sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String oneLine(String s) {
+        return s == null ? "null" : s.replace('\r', ' ').replace('\n', ' ');
+    }
+
+    private String socketName(String name) {
+        int colon = name.lastIndexOf(':');
+        if (colon <= 0 || colon == name.length() - 1 || name.endsWith("]")) return name;   // no port
+        String host = name.substring(0, colon);
+        if (!isLoopback(host)) return name;
+        int port;
+        try { port = Integer.parseInt(name.substring(colon + 1)); }
+        catch (NumberFormatException e) { return name; }                  // already a range or "*"
+        if (port == 0 || port < ephemeralLow || port > ephemeralHigh) return name;
+        return host + ":" + ephemeralLow + "-" + ephemeralHigh;
+    }
+
+    private static boolean isLoopback(String host) {                     // textual: no DNS
+        return host.equalsIgnoreCase("localhost") || host.startsWith("127.")
+            || host.equals("[::1]") || host.equals("[0:0:0:0:0:0:0:1]");
     }
     
     private class Cert implements Function<Certificate,String> {
