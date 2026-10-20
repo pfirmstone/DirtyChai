@@ -30,6 +30,7 @@ import java.security.Principal;
 import java.security.ProtectionDomain;
 import java.security.cert.Certificate;
 import java.util.Arrays;
+import au.zeus.jdk.authorization.policy.CodeSourceKey;
 
 /**
  * ProtectionDomainGrant's become void if serialized, since ProtectionDomain's
