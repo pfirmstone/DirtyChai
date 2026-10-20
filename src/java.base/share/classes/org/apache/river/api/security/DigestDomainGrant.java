@@ -61,7 +61,7 @@ import au.zeus.jdk.authorization.policy.CodeSourceKey;
 		super(domain, groups, perms);
 		this.clRef = loader;
 		this.verified = Collections.unmodifiableSet(verified);
-		this.digestCodeSource = sources.toArray(new DigestCodeSource[sources.size()]);
+		this.digestCodeSources = sources.toArray(new DigestCodeSource[sources.size()]);
 		int hashCode = 3;
 		hashCode = 37 * hashCode + Arrays.hashCode(digestCodeSources);
 		hashCode = 37 * hashCode + Objects.hashCode(verified);
