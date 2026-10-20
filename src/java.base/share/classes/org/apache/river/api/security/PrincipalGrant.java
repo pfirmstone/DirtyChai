@@ -18,6 +18,7 @@
 
 package org.apache.river.api.security;
 
+import au.zeus.jdk.authorization.policy.PolicyUtils;
 import java.io.File;
 import java.io.FilePermission;
 import java.io.InvalidObjectException;
@@ -112,89 +113,79 @@ class PrincipalGrant extends PermissionGrant implements Serializable{
         StringBuilder sb = new StringBuilder(300);
         Iterator<Principal> palIt = pals.iterator();
         while (palIt.hasNext()){
-	    Principal principal = palIt.next();
-	    sb.append("principal ");
-	    if (principal instanceof UnresolvedPrincipal){
-		sb.append(((UnresolvedPrincipal)principal).getClassName());
-	    } else {
-		sb.append(principal.getClass().getCanonicalName());
-	    }
-	    sb.append(" \"");
-	    sb.append(principal.getName());
-	    if (!palIt.hasNext()) sb.append("\",\n");
-	    else sb.append("\"\n");
+	        Principal principal = palIt.next();
+	        sb.append("principal ");
+	        if (principal instanceof UnresolvedPrincipal){
+		        sb.append(((UnresolvedPrincipal)principal).getClassName());
+	        } else {
+		        sb.append(principal.getClass().getCanonicalName());
+	        }
+	        sb.append(" \"");
+	        sb.append(PolicyUtils.escape(principal.getName()));
+	        if (palIt.hasNext()) sb.append("\",\n");
+	        else sb.append("\"\n");
         }
-	sb.append("{\n");
+	    sb.append("{\n");
         Iterator<Permission> permIt = getPermissions().iterator();
         while (permIt.hasNext()){
-	    Permission p = permIt.next();
-	    sb.append("    permission ");
+	        Permission p = permIt.next();
+	        sb.append("    permission ");
             if (p instanceof UnresolvedPermission) {
-		// UnresolvedPermission wraps an unknown class; reconstruct the
-		// original grant using the unresolved type, name and actions so
-		// that the output round-trips correctly through the parser.
-		UnresolvedPermission up = (UnresolvedPermission) p;
-		sb.append(up.getUnresolvedType());
-		sb.append(" \"");
-		String upName = up.getUnresolvedName();
-		if (upName == null) upName = "";
-		// Escape backslashes first, then quotes, to ensure round-trip parsing.
-		upName = upName.replace("\\", "\\\\").replace("\"", "\\\"");
-		sb.append(upName);
-		String upActions = up.getUnresolvedActions();
-		if (upActions != null && !"".equals(upActions)){
-		    sb.append("\", \"");
-		    sb.append(upActions);
-		    sb.append("\"");
-		} else {
-		    sb.append("\"");
-		}
-		sb.append(";\n");
-		continue;
-	    }
-	    sb.append(p.getClass().getCanonicalName());
-	    sb.append(" \"");
-	    if (p instanceof PrivateCredentialPermission){
-		PrivateCredentialPermission pcp = (PrivateCredentialPermission) p;
-		String credential = pcp.getCredentialClass();
-		String [][] princpals = pcp.getPrincipals();
-		sb.append(credential);
-		sb.append(" ");
-		for (int i=0,l=princpals.length; i<l; i++){
-		    String [] pals = princpals [i];
-		    for (int j=0,m=pals.length; j<m; j++){
-			sb.append(pals[j]);
-			if (j < m-1) sb.append(" \\\"");
-			else sb.append("\\\"");
-		    }
-		    if (i < l-1) sb.append(" ");
-		}
-	    } else {
-		/* Some complex permissions have quoted strings embedded or
-		literal carriage returns that must be escaped.  */
-		String name = p.getName();
-		if (p instanceof FilePermission){
-		    // Always escape backslashes in file paths to ensure
-		    // round-trip parsing on any OS (e.g., Windows paths
-		    // tested on Linux must also be escaped correctly).
-		    name = name.replace("\\", "\\\\").replace("\"", "\\\"");
-		} else {
-		    name = name.replace("\\\"", "\\\\\"").replace("\"","\\\"").replace("\r","\\\r");
-		}
-		sb.append(name);
-	    }
-	    String actions = p.getActions();
-	    if (actions != null && !"".equals(actions)){
-		sb.append("\", \"");
-		sb.append(actions);
-		sb.append("\"");
-	    } else {
-		sb.append("\"");
-	    }
-	    // REMIND signedBy?
-	    sb.append(";\n");
+		        // UnresolvedPermission wraps an unknown class; reconstruct the
+		        // original grant using the unresolved type, name and actions so
+		        // that the output round-trips correctly through the parser.
+		        UnresolvedPermission up = (UnresolvedPermission) p;
+		        sb.append(up.getUnresolvedType());
+		        sb.append(" \"");
+		        String upName = up.getUnresolvedName();
+		        if (upName == null) upName = "";
+		        sb.append(PolicyUtils.escape(upName));
+		        String upActions = up.getUnresolvedActions();
+		        if (upActions != null && !"".equals(upActions)){
+		            sb.append("\", \"");
+		            sb.append(PolicyUtils.escape(upActions));
+		            sb.append("\"");
+		        } else {
+		            sb.append("\"");
+		        }
+		        sb.append(";\n");
+		        continue;
+	        }
+	        sb.append(p.getClass().getCanonicalName());
+	        sb.append(" \"");
+	        if (p instanceof PrivateCredentialPermission){
+		        PrivateCredentialPermission pcp = (PrivateCredentialPermission) p;
+		        String credential = pcp.getCredentialClass();
+		        String [][] princpals = pcp.getPrincipals();
+		        sb.append(credential);
+		        sb.append(" ");
+		        for (int i=0,l=princpals.length; i<l; i++){
+		            String [] pals = princpals [i];
+		            for (int j=0,m=pals.length; j<m; j++){
+			            sb.append(pals[j]);
+			            if (j < m-1) sb.append(" \\\"");
+			            else sb.append("\\\"");
+		            }
+		            if (i < l-1) sb.append(" ");
+		        }
+	        } else {
+		        /* Some complex permissions have quoted strings embedded or
+		        literal carriage returns that must be escaped.  */
+		        String name = p.getName();
+		        sb.append(PolicyUtils.escape(name));
+	        }
+	        String actions = p.getActions();
+	        if (actions != null && !"".equals(actions)){
+		        sb.append("\", \"");
+		        sb.append(PolicyUtils.escape(actions));
+		        sb.append("\"");
+	        } else {
+		        sb.append("\"");
+	        }
+	        // REMIND signedBy?
+	        sb.append(";\n");
         }     
-	sb.append("};\n\n");
+        sb.append("};\n\n");
         return sb.toString();
     }
         

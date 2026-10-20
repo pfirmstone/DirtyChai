@@ -137,6 +137,10 @@ class CertificateGrant extends PrincipalGrant {
         if (signers == null || signers.length == 0) return false;
         return Arrays.asList(signers).containsAll(certs);
     }
+
+    final boolean hasCertificates() {
+        return !certs.isEmpty();
+    }
     
     @Override
     public PermissionGrantBuilder getBuilderTemplate() {

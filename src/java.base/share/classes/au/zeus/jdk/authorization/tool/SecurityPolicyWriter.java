@@ -526,7 +526,7 @@ public class SecurityPolicyWriter extends CombinerSecurityManager{
                                         grant.append("    principal ");
                                         grant.append(principals[i].getClass().getCanonicalName());
                                         grant.append(" \"");
-                                        grant.append(escape(principals[i].getName()));
+                                        grant.append(PolicyUtils.escape(principals[i].getName()));
                                         grant.append("\"");
                                         if (i < principals.length - 1) grant.append(",");
                                         grant.append("\n");
@@ -575,11 +575,11 @@ public class SecurityPolicyWriter extends CombinerSecurityManager{
                                         } else if (p instanceof URLPermission) {
                                             if (hostname != null) name = name.replace(hostname, "${HOST}");
                                         }
-                                        line.append(escape(name));
+                                        line.append(PolicyUtils.escape(name));
                                     }
                                     String actions = p.getActions();
                                     if (actions != null && !actions.isEmpty()) {
-                                        line.append("\", \"").append(escape(actions));
+                                        line.append("\", \"").append(PolicyUtils.escape(actions));
                                     }
                                     line.append("\";\n");
                                     String text = line.toString();
@@ -645,20 +645,7 @@ public class SecurityPolicyWriter extends CombinerSecurityManager{
         return sb.toString();
     }
 
-    private static String escape(String s) {
-        StringBuilder sb = new StringBuilder(s.length() + 8);
-        for (int i = 0, n = s.length(); i < n; i++) {
-            char c = s.charAt(i);
-            switch (c) {
-                case '\\' -> sb.append("\\\\");
-                case '"'  -> sb.append("\\\"");
-                case '\r' -> sb.append("\\r");
-                case '\n' -> sb.append("\\n");
-                default   -> sb.append(c);
-            }
-        }
-        return sb.toString();
-    }
+    
 
     private static String oneLine(String s) {
         return s == null ? "null" : s.replace('\r', ' ').replace('\n', ' ');

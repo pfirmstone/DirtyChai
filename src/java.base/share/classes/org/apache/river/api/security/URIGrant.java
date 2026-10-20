@@ -114,7 +114,7 @@ class URIGrant extends CertificateGrant {
     @Override
     public boolean implies(ClassLoader cl, Principal[] p){
 	if ( !implies(p)) return false;
-    if (!certs.isEmpty()) return false;    // a class loader carries no signers
+    if (hasCertificates()) return false;    // a class loader carries no signers
 	if ( location.isEmpty() ) return true;
         Iterator<Uri> it = location.iterator();
         while (it.hasNext()){

@@ -144,33 +144,16 @@ class ProtectionDomainGrant extends PrincipalGrant {
     // This is here for revoke and for new ProtectionDomain's created by the
     // DomainCombiner such as those in the SubjectDomainCombiner.
     private boolean impliesCodeSource(CodeSource codeSource) {
-        ProtectionDomain pd = domain != null ? domain.get(): null;
-        if (pd == null) return false; // is void - why did I have true?
-        // The CodeSource is not normalized, if the PD was created by a domain
-        // combiner it is likely that the CodeSource will have the same referent.
-        CodeSource cs = pd.getCodeSource(); // Don't normalise CodeSource.
-        if (cs == codeSource) return true; // same reference.
-        if (cs == null && codeSource == null) return true; // if both null, when pd exists.
-        if (cs == null) return false; // Null cs indicates system domain, does not imply.
-        // Most won't get to here, since domain combiners shouldn't duplicate CodeSource.
-        // But just in case...
-        // Don't use CodeSource.equals() because that causes DNS Lookup.
-        Certificate[] myCerts = cs.getCertificates();
-        Certificate[] hisCerts = codeSource.getCertificates();
-        if ( myCerts != null && !Arrays.equals(myCerts, hisCerts)) return false;
+        ProtectionDomain pd = domain != null ? domain.get() : null;
+        if (pd == null) return false;                 // void
+        CodeSource cs = pd.getCodeSource();
+        if (cs == codeSource) return true;            // same reference, or both null
+        if (cs == null || codeSource == null) return false;
         try {
-            URI myLocation = cs.getLocation().toURI();
-            URI hisLocation = codeSource.getLocation().toURI();
-            if (myLocation.equals(hisLocation)) return true;
-        } catch (URISyntaxException ex) {
-            // We only compare URL if we can't compare URI
-            URL myLocation = cs.getLocation();
-            URL hisLocation = codeSource.getLocation();
-            // Only use string representation to compare, DNS cache poisioning
-            // presents a security risk, so URL.equals isn't used.
-            if (myLocation.toExternalForm().equals(hisLocation.toExternalForm())) return true;
+            return new CodeSourceKey(cs).equals(new CodeSourceKey(codeSource));
+        } catch (URISyntaxException e) {
+            return false;                             // fail closed, no URL string fallback
         }
-        return false;
     }
     
     @Override

@@ -525,4 +525,27 @@ import au.zeus.jdk.net.Uri;
         }
         return true;
     }
+
+    /**
+     * Escapes special characters in a string for safe representation.
+     * This method replaces backslashes, double quotes, carriage returns,
+     * and newlines with their escaped counterparts.
+     *
+     * @param s the input string to escape
+     * @return the escaped string
+     */
+    public static String escape(String s) {
+        StringBuilder sb = new StringBuilder(s.length() + 8);
+        for (int i = 0, n = s.length(); i < n; i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '\\' -> sb.append("\\\\");
+                case '"'  -> sb.append("\\\"");
+                case '\r' -> sb.append("\\r");
+                case '\n' -> sb.append("\\n");
+                default   -> sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
 }
