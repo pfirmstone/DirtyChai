@@ -45,27 +45,24 @@ import au.zeus.jdk.authorization.policy.CodeSourceKey;
  * @author Peter Firmstone.
  * @since 27
  */
- class DigestDomainGrant extends ProtectionDomainGrant {
+ @SuppressWarnings("serial")
+ final class DigestDomainGrant extends ProtectionDomainGrant {
 	private static final long serialVersionUID = 1L;
 	private final WeakReference<ClassLoader> clRef;
-	private final Set<CodeSourceKey> verified;
 	private final DigestCodeSource [] digestCodeSources;
 	private final int hashCode;
 
 	DigestDomainGrant(WeakReference<ProtectionDomain> domain,
-					  WeakReference<ClassLoader> loader,
-					  Set<CodeSourceKey> verified,
 					  List<CodeSource> sources,
 					  Principal[] groups,
 					  Permission[] perms){
 		super(domain, groups, perms);
-		this.clRef = loader;
-		this.verified = Collections.unmodifiableSet(verified);
+		ProtectionDomain pd = domain.get();
+		ClassLoader cl = pd != null? pd.getClassLoader() : null;
+		this.clRef = cl != null? new WeakReference<ClassLoader>(cl) : null;
 		this.digestCodeSources = sources.toArray(new DigestCodeSource[sources.size()]);
 		int hashCode = 3;
 		hashCode = 37 * hashCode + Arrays.hashCode(digestCodeSources);
-		hashCode = 37 * hashCode + Objects.hashCode(verified);
-		ClassLoader cl = clRef.get();
 		hashCode = 37 * hashCode + (cl != null ? System.identityHashCode(cl) : 0);
 		hashCode = 37 * hashCode + super.hashCode();
 		this.hashCode = hashCode;
@@ -79,13 +76,81 @@ import au.zeus.jdk.authorization.policy.CodeSourceKey;
 		if (o == this) return true;
 		if (o instanceof DigestDomainGrant that){
 			if (hashCode != that.hashCode()) return false;
-			if (!Objects.equals(clRef.get(), that.clRef.get())) return false;
+			ClassLoader myLoader = clRef != null? clRef.get() : null;
+			ClassLoader thatLoader = that.clRef != null? that.clRef.get() : null;
+			if (myLoader != thatLoader) return false;
 			if (!super.equals(o)) return false;
-			if (!Arrays.equals(digestCodeSources, that.digestCodeSources)) return false;
-			return verified.equals(that.verified);
+			return Arrays.equals(digestCodeSources, that.digestCodeSources);
 		}
 		return false;
 	}
+
+	@Override
+	public int hashCode() {
+		return hashCode;
+	}
+
+	@Override
+	public String toString() {
+		ClassLoader cl = clRef != null? clRef.get() : null;
+		StringBuilder sb = new StringBuilder();
+		sb.append(super.toString());
+		sb.append("\nDigestDomainGrant[");
+		sb.append("ClassLoader: ").append(cl).append(", ");
+		sb.append("CodeSources: ").append(Arrays.toString(digestCodeSources)).append(", ");
+		return sb.toString();
+	}
+
+	@Override
+    public boolean implies(ProtectionDomain pd) {
+        ClassLoader myLoader = clRef != null ? clRef.get(): null;
+        if (myLoader == null || pd == null || pd.getClassLoader() != myLoader) return false;
+        if (!implies(getPrincipals(pd))) return false;
+        CodeSource cs = pd.getCodeSource();
+		if (cs instanceof DigestCodeSource dcs) {
+			if (dcs.unverified()) return false;
+			for (DigestCodeSource dcs2 : digestCodeSources) {
+				if (dcs.equals(dcs2)) return true;
+			}
+		}
+		return false;
+    }
+
+	 
+    public boolean implies(ClassLoader cl, Principal[] pal) {
+        return false; // We could determine this if we can obtain the list of CodeSource's
+    }
+
+    
+    public boolean implies(CodeSource codeSource, Principal[] pal) {
+        return false; // Grant is dynamic only.
+    }
+
+	@Override
+    public boolean isVoid() {
+        return super.isVoid() || clRef == null || clRef.get() == null;
+    }
+
+	@Override
+    public boolean impliesEquivalent(PermissionGrant grant) {
+        if (grant instanceof DigestDomainGrant other){
+			ClassLoader myloader = clRef != null ? clRef.get(): null;
+			ClassLoader theirLoader = other.clRef != null ? other.clRef.get(): null;
+			if (myloader == null || myloader != theirLoader) return false;
+			if (!super.impliesEquivalent(grant)) return false;
+			return Arrays.equals(digestCodeSources, other.digestCodeSources);
+		}
+		return false;
+    }
+
+	@Override
+    public PermissionGrantBuilder getBuilderTemplate() {
+        PermissionGrantBuilder pgb = super.getBuilderTemplate();
+        if (pgb instanceof PermissionGrantBuilderImp pgbi) {
+            pgbi.setCodeSources(Arrays.asList(digestCodeSources));
+        }
+        return pgb.context(PermissionGrantBuilder.DIGEST_DOMAIN);
+    }
 
 
 	//writeReplace method for serialization proxy pattern

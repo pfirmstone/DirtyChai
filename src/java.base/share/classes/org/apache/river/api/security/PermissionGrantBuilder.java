@@ -192,6 +192,15 @@ public abstract class PermissionGrantBuilder {
      */
     public static final int DIGEST = 6;
 
+    /**
+     * The PermissionGrant generated will apply to all classes loaded by
+     * the ClassLoader belonging to a DigestCodeSource
+     * {@link java.security.DigestCodeSource} with a
+     * matching digest algorithm and digest value.  Any domain backed by a plain
+     * {@link java.security.CodeSource} is not implied.
+     */
+    public static final int DIGEST_DOMAIN = 7;
+
     public static PermissionGrantBuilder newBuilder(){
         return new PermissionGrantBuilderImp();
     }
@@ -303,4 +312,16 @@ public abstract class PermissionGrantBuilder {
      * @return this builder
      */
     public abstract PermissionGrantBuilder digest(String algorithm, byte[] digestValue);
+
+    /**
+     * Specifies the CodeSources that the grant target must match.  This is
+     * used to support digest-based grants, where the grant target
+     * must be a {@link java.security.DigestCodeSource} with a matching
+     * digest algorithm and digest value.
+     *
+     * @param codeSources the CodeSource objects to match
+     * @return this builder
+     * @sicne 27
+     */
+    public abstract PermissionGrantBuilder codeSources(CodeSource... codeSources) ;
 }

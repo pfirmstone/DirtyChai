@@ -30,6 +30,8 @@ import java.security.Principal;
 import java.security.ProtectionDomain;
 import java.security.cert.Certificate;
 import java.util.ArrayList;
+import java.util.List;
+import java.util.Arrays;
 
 /**
  * PermissionGrantBuilderImp represents the serialized form of all
@@ -73,6 +75,7 @@ class PermissionGrantBuilderImp extends PermissionGrantBuilder implements
     // Transient Fields
     private transient Collection<String> uris;
     private transient WeakReference<ProtectionDomain> domain;
+    private transient List<CodeSource> codeSources;
    
     PermissionGrantBuilderImp() {
         super();
@@ -89,6 +92,7 @@ class PermissionGrantBuilderImp extends PermissionGrantBuilder implements
         certs = null;
 	aliases = null;
         domain = null;
+        codeSources = null;
         hasDomain = false;
         principals = null;
         permissions = null;
@@ -125,6 +129,16 @@ class PermissionGrantBuilderImp extends PermissionGrantBuilder implements
                 hasDomain = true;
             }
         }
+        return this;
+    }
+
+    public PermissionGrantBuilder codeSources(CodeSource... cs) {
+        codeSources = cs == null ? null : new ArrayList<CodeSource>(Arrays.asList(cs));
+        return this;
+    }
+
+    PermissionGrantBuilderImp setCodeSources(List<CodeSource> cs) {
+        codeSources = cs;
         return this;
     }
 
@@ -171,6 +185,8 @@ class PermissionGrantBuilderImp extends PermissionGrantBuilder implements
                 // Don't return principal grant if domain null, dynamic grant's
                 // are treated special.
                 return new ClassLoaderGrant(domain, principals, permissions );
+            case DIGEST_DOMAIN: //Dynamic grant
+                return new DigestDomainGrant(domain, codeSources, principals, permissions);
             case URI:
                 if (uris != null && !uris.isEmpty() ) uri = uris.toArray(new String[uris.size()]);
                 if (uri == null ) uri = new String[0];
@@ -213,7 +229,7 @@ class PermissionGrantBuilderImp extends PermissionGrantBuilder implements
     // readResolve method returns a PermissionGrant instance.
     private Object readResolve(){
         // Don't deserialize specific grant's, they will grant to any domain.
-        if (context == CLASSLOADER || context == PROTECTIONDOMAIN){
+        if (context == CLASSLOADER || context == PROTECTIONDOMAIN || context == DIGEST_DOMAIN){
             if (hasDomain) return nullGrant;
         }
         // It's ok to return domainless dynamic grants.

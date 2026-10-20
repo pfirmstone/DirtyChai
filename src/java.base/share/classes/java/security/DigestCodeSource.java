@@ -603,29 +603,20 @@ public final class DigestCodeSource extends CodeSource implements Externalizable
      */
     @Override
     public boolean equals(Object o) {
-        if (this == o) {
-            return true;
+        if (this == o)  return true;
+        if (o instanceof DigestCodeSource that) {
+            if (this.cachedHashCode != that.cachedHashCode) return false;
+            // URI comparison — never null on a successfully constructed instance
+            // when location is non-null, so XOR here means one has a location and
+            // the other does not: they are not equal.
+            if (uri == null ^ that.uri == null) return false;
+            if (uri != null && !uri.equals(that.uri))  return false;
+            // Both URIs are null (both have null location) or both are equal.
+            if (!Arrays.equals(cachedCerts(), that.cachedCerts())) return false;
+            if (!stringsEqual(digestAlgorithm, that.digestAlgorithm)) return false;
+            return Arrays.equals(digest, that.digest);
         }
-        if (!(o instanceof DigestCodeSource that)) {
-            return false;
-        }
-        // URI comparison — never null on a successfully constructed instance
-        // when location is non-null, so XOR here means one has a location and
-        // the other does not: they are not equal.
-        if (uri == null ^ that.uri == null) {
-            return false;
-        }
-        if (uri != null && !uri.equals(that.uri)) {
-            return false;
-        }
-        // Both URIs are null (both have null location) or both are equal.
-        if (!Arrays.equals(cachedCerts(), that.cachedCerts())) {
-            return false;
-        }
-        if (!stringsEqual(digestAlgorithm, that.digestAlgorithm)) {
-            return false;
-        }
-        return Arrays.equals(digest, that.digest);
+        return false;
     }
 
     /**
