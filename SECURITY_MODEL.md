@@ -2,7 +2,7 @@
 
 - **Version:** 2.4
 - **Date:** 2026-05-26
-- **Last Reviewed:** 2026-05-26
+- **Last Reviewed:** 2026-10-19
 - **Project:** Dirty Chai
 - **Repository:** https://github.com/pfirmstone/DirtyChai
 
@@ -386,14 +386,23 @@ SHA-256, SHA-384, SHA-512, SHA-512/256, SHA3-256, SHA3-384, SHA3-512
 
 A `DigestGrant` (produced by a policy `digest` clause) implies a `ProtectionDomain` only when **all** of the following hold:
 
-1. URI / codebase match (delegated to `URIGrant`).
-2. Certificate / signer match (delegated to `CertificateGrant`).
-3. Principal match (delegated to `URIGrant`).
-4. `pd.getCodeSource()` is a `DigestCodeSource` instance.
-5. The algorithm name matches exactly (case-sensitive).
-6. The digest bytes match exactly (`Arrays.equals`).
+1. Principal match.
+2. `pd.getCodeSource()` is a `DigestCodeSource` instance whose digest was computed when the domain was created (`unverified()` is false). A `DigestCodeSource` constructed with a supplied digest, or deserialised, is never implied: otherwise code allowed to create a class loader could define its own bytes in a domain carrying a trusted jar's digest. *(Agreed 2026-10-18; being implemented.)*
+3. The algorithm name matches exactly (case-sensitive).
+4. The digest bytes match exactly (`Arrays.equals`).
+5. Every signer named by the grant is present on the code source (`CertificateGrant.impliesSigners`). Unsigned code is not implied by a grant that names signers.
+
+The location is **not** compared: content, not location, is the identity a digest grant is made to, so the same artifact is matched wherever it is loaded from. A `codeBase` written in a `digest` grant has no effect on matching.
 
 A `DigestGrant` always returns `false` for a plain `ClassLoader` argument (digest is indeterminate without a `CodeSource`).
+
+### Dynamic grants to proxies
+
+*Design agreed 2026-10-18, being implemented in both trees; see JGDMS `docs/SOW-PermissionGrant-Mirror-and-ProtectionDomain-Grants.md`, section 7.*
+
+JGDMS makes dynamic grants to proxies after verifying them. Where the codebase was verified with a digest per jar, the grant is a `DigestDomainGrant` (`PermissionGrantBuilder.DIGEST_DOMAIN`). It applies to a `ProtectionDomain` only when the domain was defined by the proxy's loader (held weakly, so the grant goes with the proxy), the grant's principals are satisfied, the domain's code source is a computed (not `unverified()`) `DigestCodeSource`, and its `CodeSourceKey` (location, signers and digest) is one of the identities the verifier supplied. Jars added to the loader later, jars whose content differs from what was verified, and domains carrying a supplied digest receive nothing from it.
+
+Where the codebase could not be verified that way, the grant is the loader-wide `ClassLoaderGrant`, as before; policy should limit what that path can confer through `GrantPermission`. Either grant is only as narrow as the loader it is attached to, so loader isolation per remote object, and planned per-SPIFFE-ID process isolation, matter as much as the grant rules. The isolating process is itself an entry point that runs downloaded code, so least privilege inside it still depends on these rules. See [`JGDMS_COMPATIBILITY.md`](JGDMS_COMPATIBILITY.md) for the full rules.
 
 ### Network caching (JarResponseCache)
 

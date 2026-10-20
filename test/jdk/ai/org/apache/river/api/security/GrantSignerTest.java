@@ -71,7 +71,13 @@ import org.apache.river.api.security.PermissionGrantBuilder;
  * URIGrant.implies(ClassLoader, Principal[]) returns true for an empty
  * location whatever the signers.
  *
- * <p>OBSERVED: not yet recorded.
+ * <p>OBSERVED 2026-10-18, against an image whose URIGrant predated the fix:
+ * 5 failures, exactly the URIGrant cases above (codeBase + signedBy alice
+ * implied unsigned and bob-signed code; implies(ClassLoader) true with
+ * signedBy). The CertificateGrant, DigestGrant and unresolved-alias cases
+ * passed. After rebuilding with URIGrant calling impliesSigners and
+ * returning false from implies(ClassLoader) when it has certificates:
+ * passed.
  */
 public class GrantSignerTest {
 
