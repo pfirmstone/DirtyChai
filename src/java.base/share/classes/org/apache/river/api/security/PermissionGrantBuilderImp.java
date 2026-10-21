@@ -125,6 +125,9 @@ class PermissionGrantBuilderImp extends PermissionGrantBuilder implements
 
     @SuppressWarnings("rawtypes")
     public PermissionGrantBuilder clazz(Class cl) {
+        domain = null;
+        loader = null;
+        hasDomain = false;
         if (cl != null) {
 	        ProtectionDomain pd = cl.getProtectionDomain();
             ClassLoader l = cl.getClassLoader();
