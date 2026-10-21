@@ -70,7 +70,7 @@ import au.zeus.jdk.authorization.policy.CodeSourceKey;
 	}
 
 	@Override
-	public boolean equals(Object o){ // Remind: don't call super.equals
+	public boolean equals(Object o){
 		if (o == null) return false;
 		if (o == this) return true;
 		if (o instanceof DigestDomainGrant that){
@@ -78,7 +78,8 @@ import au.zeus.jdk.authorization.policy.CodeSourceKey;
 			ClassLoader myLoader = loaderRef != null? loaderRef.get() : null;
 			ClassLoader thatLoader = that.loaderRef != null? that.loaderRef.get() : null;
 			if (myLoader != thatLoader) return false;
-			return Arrays.equals(digestCodeSources, that.digestCodeSources);
+			if (!Arrays.equals(digestCodeSources, that.digestCodeSources)) return false;
+			return super.equals(o);
 		}
 		return false;
 	}
@@ -140,6 +141,11 @@ import au.zeus.jdk.authorization.policy.CodeSourceKey;
 			return Arrays.equals(digestCodeSources, other.digestCodeSources);
 		}
 		return false;
+    }
+
+	@Override
+    public boolean isDyanamic() {
+		return true;
     }
 
 	@Override

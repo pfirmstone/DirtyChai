@@ -94,6 +94,7 @@ class PermissionGrantBuilderImp extends PermissionGrantBuilder implements
         certs = null;
 	aliases = null;
         domain = null;
+        loader = null;
         codeSources = null;
         hasDomain = false;
         principals = null;

@@ -43,7 +43,7 @@ class ClassLoaderGrant extends PrincipalGrant {
         ClassLoader myLoader = loaderRef != null? loaderRef.get() : null;
         int hash = 7;
         hash = 19 * hash + super.hashCode();
-        if ( myLoader != null) hash = 19 * hash + myLoader.hashCode();
+        if ( myLoader != null) hash = 19 * hash + System.identityHashCode(myLoader);
         hashCode = hash;
         this.loaderRef = loaderRef;
     }
@@ -97,12 +97,17 @@ class ClassLoaderGrant extends PrincipalGrant {
     public boolean impliesEquivalent(PermissionGrant grant) {
         if (!super.impliesEquivalent(grant)) return false;
 	    if (grant instanceof ClassLoaderGrant that){
-            ClassLoader myCL = loaderRef.get();
-	        ClassLoader yourCL = that.loaderRef.get();
+            ClassLoader myCL = loaderRef != null ? loaderRef.get() : null;
+	        ClassLoader yourCL = that.loaderRef != null? that.loaderRef.get() : null;
 	        if (myCL != null && yourCL != null) return myCL == yourCL;
         }
 	    return false;
 	    // The superclass has a narrower scope than ClassLoaderGrant.
+    }
+
+    @Override
+    public boolean isDyanamic() {
+	    return true;
     }
 
     @Override
