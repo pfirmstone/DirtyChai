@@ -31,7 +31,7 @@ import java.security.ProtectionDomain;
  * @since 3.0.0
  */
  @SuppressWarnings("serial")
-class ClassLoaderGrant extends ProtectionDomainGrant {
+class ClassLoaderGrant extends PrincipalGrant {
     private static final long serialVersionUID = 1L;
     private final int hashCode;
     private final WeakReference<ClassLoader> loaderRef;
@@ -39,7 +39,7 @@ class ClassLoaderGrant extends ProtectionDomainGrant {
     @SuppressWarnings("unchecked")
     ClassLoaderGrant(WeakReference<ClassLoader> loaderRef, Principal[] groups, 
             Permission[] perm){
-        super(null, groups, perm);
+        super(groups, perm);
         ClassLoader myLoader = loaderRef != null? loaderRef.get() : null;
         int hash = 7;
         hash = 19 * hash + super.hashCode();
@@ -56,7 +56,8 @@ class ClassLoaderGrant extends ProtectionDomainGrant {
         if (o instanceof ClassLoaderGrant that){
             ClassLoader myLoader = this.loaderRef != null? this.loaderRef.get() : null;
             ClassLoader thatLoader = that.loaderRef != null? that.loaderRef.get() : null;
-            return myLoader == thatLoader;
+            if (myLoader != thatLoader) return false;
+            return super.equals(o);
         }
         return false;
     }
@@ -69,7 +70,7 @@ class ClassLoaderGrant extends ProtectionDomainGrant {
     public String toString(){
         StringBuilder sb = new StringBuilder(500);
         return sb.append(super.toString())
-                 .append("ClassLoader grant.")
+                 .append("\nClassLoader grant.")
                  .append(loaderRef != null? loaderRef.get() : "NULL")
                  .toString();
     }
@@ -94,16 +95,12 @@ class ClassLoaderGrant extends ProtectionDomainGrant {
     
     @Override
     public boolean impliesEquivalent(PermissionGrant grant) {
-	    if (!(grant instanceof ClassLoaderGrant)) return false;
-	    ProtectionDomain myPd = domain.get();
-	    ProtectionDomain yourPd = ((ClassLoaderGrant)grant).domain.get();
-	    if (myPd != null && yourPd != null){
-	        ClassLoader myCL = myPd.getClassLoader();
-	        ClassLoader yourCL = yourPd.getClassLoader();
-	        if (myCL != null && yourCL != null){
-		    return myCL.equals(yourCL);
-	        }
-	    }
+        if (!super.impliesEquivalent(grant)) return false;
+	    if (grant instanceof ClassLoaderGrant that){
+            ClassLoader myCL = loaderRef.get();
+	        ClassLoader yourCL = that.loaderRef.get();
+	        if (myCL != null && yourCL != null) return myCL == yourCL;
+        }
 	    return false;
 	    // The superclass has a narrower scope than ClassLoaderGrant.
     }

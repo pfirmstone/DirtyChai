@@ -46,7 +46,7 @@ import au.zeus.jdk.authorization.policy.CodeSourceKey;
  * @since 27
  */
  @SuppressWarnings("serial")
- final class DigestDomainGrant extends ProtectionDomainGrant {
+ final class DigestDomainGrant extends PrincipalGrant {
 	private static final long serialVersionUID = 1L;
 	private final WeakReference<ClassLoader> loaderRef;
 	private final DigestCodeSource [] digestCodeSources;
@@ -56,7 +56,7 @@ import au.zeus.jdk.authorization.policy.CodeSourceKey;
 					  List<CodeSource> sources,
 					  Principal[] groups,
 					  Permission[] perms){
-		super(null, groups, perms);
+		super(groups, perms);
 		this.loaderRef = loaderRef;
 		this.digestCodeSources = sources.toArray(new DigestCodeSource[sources.size()]);
 		ClassLoader cl = loaderRef != null? loaderRef.get() : null;

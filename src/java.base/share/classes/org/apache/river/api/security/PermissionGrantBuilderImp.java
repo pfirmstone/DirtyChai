@@ -191,10 +191,15 @@ class PermissionGrantBuilderImp extends PermissionGrantBuilder implements
                 // are treated special.
                 return new ClassLoaderGrant(loader, principals, permissions );
             case DIGEST_DOMAIN: //Dynamic grant
-                if (loader == null || loader.get() == null) throw new IllegalArgumentException("ClassLoader must not be null for DIGEST_DOMAIN context");
-                if (codeSources == null || codeSources.isEmpty()) throw new IllegalArgumentException("codeSources must not be null or empty for DIGEST_DOMAIN context");
+                if (loader == null || loader.get() == null)
+                    throw new IllegalArgumentException("ClassLoader must not be null for DIGEST_DOMAIN context");
+                if (codeSources == null || codeSources.isEmpty())
+                    throw new IllegalArgumentException("codeSources must not be null or empty for DIGEST_DOMAIN context");
                 for (CodeSource cs : codeSources) {
-                    if (!(cs instanceof DigestCodeSource)) {
+                    if (cs instanceof DigestCodeSource dgs) {
+                        if (!"SHA-256".equals(dgs.getDigestAlgorithm())) 
+                            throw new IllegalArgumentException("Unsupported digest algorithm: "+ dgs.getDigestAlgorithm());
+                    } else {
                         throw new IllegalArgumentException("All codeSources must be instances of DigestCodeSource for DIGEST_DOMAIN context");
                     }
                 }
