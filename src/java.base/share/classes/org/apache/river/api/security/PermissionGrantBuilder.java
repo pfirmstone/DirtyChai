@@ -196,7 +196,8 @@ public abstract class PermissionGrantBuilder {
      * The PermissionGrant generated will apply to all classes loaded by
      * the ClassLoader belonging to a DigestCodeSource
      * {@link java.security.DigestCodeSource} with a
-     * matching digest algorithm and digest value.  Any domain backed by a plain
+     * matching digest algorithm and validated digest value.
+     * Any unvalidated digest or domain backed by a plain
      * {@link java.security.CodeSource} is not implied.
      */
     public static final int DIGEST_DOMAIN = 7;

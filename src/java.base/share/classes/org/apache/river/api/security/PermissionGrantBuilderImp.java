@@ -25,6 +25,7 @@ import java.io.Serializable;
 import java.util.Collection;
 import java.lang.ref.WeakReference;
 import java.security.CodeSource;
+import java.security.DigestCodeSource;
 import java.security.Permission;
 import java.security.Principal;
 import java.security.ProtectionDomain;
@@ -106,8 +107,8 @@ class PermissionGrantBuilderImp extends PermissionGrantBuilder implements
         if (context < 0) {
             throw new IllegalStateException("context must be >= 0");
         }
-        if (context > 6) {
-            throw new IllegalStateException("context must be <= 6");
+        if (context > 7) {
+            throw new IllegalStateException("context must be <= 7");
         }
         this.context = context;
         return this;
@@ -186,6 +187,13 @@ class PermissionGrantBuilderImp extends PermissionGrantBuilder implements
                 // are treated special.
                 return new ClassLoaderGrant(domain, principals, permissions );
             case DIGEST_DOMAIN: //Dynamic grant
+                if (domain == null || domain.get() == null) throw new IllegalArgumentException("domain must not be null for DIGEST_DOMAIN context");
+                if (codeSources == null || codeSources.isEmpty()) throw new IllegalArgumentException("codeSources must not be null or empty for DIGEST_DOMAIN context");
+                for (CodeSource cs : codeSources) {
+                    if (!(cs instanceof DigestCodeSource)) {
+                        throw new IllegalArgumentException("All codeSources must be instances of DigestCodeSource for DIGEST_DOMAIN context");
+                    }
+                }
                 return new DigestDomainGrant(domain, codeSources, principals, permissions);
             case URI:
                 if (uris != null && !uris.isEmpty() ) uri = uris.toArray(new String[uris.size()]);
@@ -228,8 +236,9 @@ class PermissionGrantBuilderImp extends PermissionGrantBuilder implements
     
     // readResolve method returns a PermissionGrant instance.
     private Object readResolve(){
+        if (context == DIGEST_DOMAIN) return nullGrant;
         // Don't deserialize specific grant's, they will grant to any domain.
-        if (context == CLASSLOADER || context == PROTECTIONDOMAIN || context == DIGEST_DOMAIN){
+        if (context == CLASSLOADER || context == PROTECTIONDOMAIN){
             if (hasDomain) return nullGrant;
         }
         // It's ok to return domainless dynamic grants.

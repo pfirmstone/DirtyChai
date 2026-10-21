@@ -97,7 +97,8 @@ import au.zeus.jdk.authorization.policy.CodeSourceKey;
 		sb.append(super.toString());
 		sb.append("\nDigestDomainGrant[");
 		sb.append("ClassLoader: ").append(cl).append(", ");
-		sb.append("CodeSources: ").append(Arrays.toString(digestCodeSources)).append(", ");
+		sb.append("CodeSources: ").append(Arrays.toString(digestCodeSources));
+		sb.append(']');
 		return sb.toString();
 	}
 
