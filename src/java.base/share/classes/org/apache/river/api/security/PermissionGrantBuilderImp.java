@@ -76,6 +76,7 @@ class PermissionGrantBuilderImp extends PermissionGrantBuilder implements
     // Transient Fields
     private transient Collection<String> uris;
     private transient WeakReference<ProtectionDomain> domain;
+    private transient WeakReference<ClassLoader> loader;
     private transient List<CodeSource> codeSources;
    
     PermissionGrantBuilderImp() {
@@ -124,12 +125,15 @@ class PermissionGrantBuilderImp extends PermissionGrantBuilder implements
     @SuppressWarnings("rawtypes")
     public PermissionGrantBuilder clazz(Class cl) {
         if (cl != null) {
-	    ProtectionDomain pd = cl.getProtectionDomain();
-	    if ( pd != null ){
-		domain = new WeakReference<ProtectionDomain>(pd);
+	        ProtectionDomain pd = cl.getProtectionDomain();
+            ClassLoader l = cl.getClassLoader();
+	        if ( pd != null ){
+		        domain = new WeakReference<ProtectionDomain>(pd);
                 hasDomain = true;
             }
+            if (l != null) loader = new WeakReference<ClassLoader>(l);
         }
+        
         return this;
     }
 
@@ -185,16 +189,16 @@ class PermissionGrantBuilderImp extends PermissionGrantBuilder implements
             case CLASSLOADER: //Dynamic grant
                 // Don't return principal grant if domain null, dynamic grant's
                 // are treated special.
-                return new ClassLoaderGrant(domain, principals, permissions );
+                return new ClassLoaderGrant(loader, principals, permissions );
             case DIGEST_DOMAIN: //Dynamic grant
-                if (domain == null || domain.get() == null) throw new IllegalArgumentException("domain must not be null for DIGEST_DOMAIN context");
+                if (loader == null || loader.get() == null) throw new IllegalArgumentException("ClassLoader must not be null for DIGEST_DOMAIN context");
                 if (codeSources == null || codeSources.isEmpty()) throw new IllegalArgumentException("codeSources must not be null or empty for DIGEST_DOMAIN context");
                 for (CodeSource cs : codeSources) {
                     if (!(cs instanceof DigestCodeSource)) {
                         throw new IllegalArgumentException("All codeSources must be instances of DigestCodeSource for DIGEST_DOMAIN context");
                     }
                 }
-                return new DigestDomainGrant(domain, codeSources, principals, permissions);
+                return new DigestDomainGrant(loader, codeSources, principals, permissions);
             case URI:
                 if (uris != null && !uris.isEmpty() ) uri = uris.toArray(new String[uris.size()]);
                 if (uri == null ) uri = new String[0];

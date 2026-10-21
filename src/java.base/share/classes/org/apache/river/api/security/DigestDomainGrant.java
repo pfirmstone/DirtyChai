@@ -48,19 +48,18 @@ import au.zeus.jdk.authorization.policy.CodeSourceKey;
  @SuppressWarnings("serial")
  final class DigestDomainGrant extends ProtectionDomainGrant {
 	private static final long serialVersionUID = 1L;
-	private final WeakReference<ClassLoader> clRef;
+	private final WeakReference<ClassLoader> loaderRef;
 	private final DigestCodeSource [] digestCodeSources;
 	private final int hashCode;
 
-	DigestDomainGrant(WeakReference<ProtectionDomain> domain,
+	DigestDomainGrant(WeakReference<ClassLoader> loaderRef,
 					  List<CodeSource> sources,
 					  Principal[] groups,
 					  Permission[] perms){
-		super(domain, groups, perms);
-		ProtectionDomain pd = domain.get();
-		ClassLoader cl = pd != null? pd.getClassLoader() : null;
-		this.clRef = cl != null? new WeakReference<ClassLoader>(cl) : null;
+		super(null, groups, perms);
+		this.loaderRef = loaderRef;
 		this.digestCodeSources = sources.toArray(new DigestCodeSource[sources.size()]);
+		ClassLoader cl = loaderRef != null? loaderRef.get() : null;
 		int hashCode = 3;
 		hashCode = 37 * hashCode + Arrays.hashCode(digestCodeSources);
 		hashCode = 37 * hashCode + (cl != null ? System.identityHashCode(cl) : 0);
@@ -71,15 +70,14 @@ import au.zeus.jdk.authorization.policy.CodeSourceKey;
 	}
 
 	@Override
-	public boolean equals(Object o){
+	public boolean equals(Object o){ // Remind: don't call super.equals
 		if (o == null) return false;
 		if (o == this) return true;
 		if (o instanceof DigestDomainGrant that){
 			if (hashCode != that.hashCode()) return false;
-			ClassLoader myLoader = clRef != null? clRef.get() : null;
-			ClassLoader thatLoader = that.clRef != null? that.clRef.get() : null;
+			ClassLoader myLoader = loaderRef != null? loaderRef.get() : null;
+			ClassLoader thatLoader = that.loaderRef != null? that.loaderRef.get() : null;
 			if (myLoader != thatLoader) return false;
-			if (!super.equals(o)) return false;
 			return Arrays.equals(digestCodeSources, that.digestCodeSources);
 		}
 		return false;
@@ -92,7 +90,7 @@ import au.zeus.jdk.authorization.policy.CodeSourceKey;
 
 	@Override
 	public String toString() {
-		ClassLoader cl = clRef != null? clRef.get() : null;
+		ClassLoader cl = loaderRef != null? loaderRef.get() : null;
 		StringBuilder sb = new StringBuilder();
 		sb.append(super.toString());
 		sb.append("\nDigestDomainGrant[");
@@ -104,7 +102,7 @@ import au.zeus.jdk.authorization.policy.CodeSourceKey;
 
 	@Override
     public boolean implies(ProtectionDomain pd) {
-        ClassLoader myLoader = clRef != null ? clRef.get(): null;
+        ClassLoader myLoader = loaderRef != null ? loaderRef.get(): null;
         if (myLoader == null || pd == null || pd.getClassLoader() != myLoader) return false;
         if (!implies(getPrincipals(pd))) return false;
         CodeSource cs = pd.getCodeSource();
@@ -119,7 +117,7 @@ import au.zeus.jdk.authorization.policy.CodeSourceKey;
 
 	 
     public boolean implies(ClassLoader cl, Principal[] pal) {
-        return false; // We could determine this if we can obtain the list of CodeSource's
+        return false; // We could only determine this if we can obtain the list of CodeSource's
     }
 
     
@@ -129,14 +127,14 @@ import au.zeus.jdk.authorization.policy.CodeSourceKey;
 
 	@Override
     public boolean isVoid() {
-        return super.isVoid() || clRef == null || clRef.get() == null;
+        return loaderRef == null || loaderRef.get() == null || getPermissions().isEmpty();
     }
 
 	@Override
     public boolean impliesEquivalent(PermissionGrant grant) {
         if (grant instanceof DigestDomainGrant other){
-			ClassLoader myloader = clRef != null ? clRef.get(): null;
-			ClassLoader theirLoader = other.clRef != null ? other.clRef.get(): null;
+			ClassLoader myloader = loaderRef != null ? loaderRef.get(): null;
+			ClassLoader theirLoader = other.loaderRef != null ? other.loaderRef.get(): null;
 			if (myloader == null || myloader != theirLoader) return false;
 			if (!super.impliesEquivalent(grant)) return false;
 			return Arrays.equals(digestCodeSources, other.digestCodeSources);
