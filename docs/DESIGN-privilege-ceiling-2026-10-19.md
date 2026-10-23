@@ -1,6 +1,6 @@
 # Design: a privilege ceiling that `doPrivileged` cannot shed
 
-**Status: design note, revision 3 (2026-10-19). Not implemented, not scheduled.** Records the outcome of a design
+**Status: design note, revision 4 (2026-10-23). Not implemented, not scheduled.** **Read §13 first, then §12.** Revision 4: the per-class policy-reducing intersection is applied to *every* `doPrivileged` form in `executePrivileged` (§13), which removes the elevating forms entirely; the ceiling (§3–§5) and the call-site conversion sweep (§4.6) are both superseded by one change. §12 remains as the step that led there. Records the outcome of a design
 discussion between the maintainer and Claude (`claude-fable-5-1`), revised twice after reviews by and discussion
 with Claude Opus (`claude-opus-5-5`), against DirtyChai `trunk` at `af6bc547954`. Companion to JGDMS
 `docs/ANALYSIS-legacy-API-authority-and-reconstruction-2026-10-19.md`, whose §2 sketch and "weaknesses" list this
@@ -12,11 +12,20 @@ Revision history:
 - r1: ceiling as a policy-granted sealed domain bound in a `ScopedValue`; per-thread default ceiling (`ROOT`).
 - r2: `ROOT` dropped (conflicted with the AllPermission rule; bounded lazy JDK singletons); ceiling scoped like
   `Subject`; carried in contexts as an appended sealed domain, not a field.
-- r3 (this): **the ceiling caps elevation only** — it is applied when an elevating `doPrivileged` builds its
+- r3: **the ceiling caps elevation only** — it is applied when an elevating `doPrivileged` builds its
   privileged context, and plain checks are left to least privilege; the binding is an accumulating immutable
   array; platform threads take the ceiling from the inherited context, `Thread` gains nothing; all java.base
   `doPrivileged` calls convert to the policy-reducing form, which the ceiling does not apply to; §8 corrected
   (the three-argument form is intended design; the static-collection union is the defect).
+- r4 (this, §13): **every `doPrivileged` form intersects the caller's per-class policy domain**, in
+  `executePrivileged`; no elevating form remains; ceiling and conversion sweep superseded.
+
+> **Authorship note:** analysis and design discussion produced with AI assistance (Claude Fable 5.1, reviewed by
+> Claude Opus 5.5), under the OpenJDK Interim Policy on Generative AI as adopted in `CONTRIBUTING.md` — analysis and
+> review support, not source, test or shipped documentation. It lives under `docs/`, not the repository root, so the
+> *Repository Documentation Exception* in `AI_POLICY.md` does not cover it as written; the Project Lead decides whether
+> it moves to the root, stays as an analysis record, or is mirrored to JGDMS (`JGDMS/docs/`) where AI-authored design
+> documents are the norm. Nothing in it has been executed; every behavioural claim is from reading source.
 
 ## 0. The question, and the limit of the answer
 
@@ -414,3 +423,173 @@ Read against the current source (not executed).
    field would have had to be threaded through the builder.
 5. polpAudit's `SecurityPolicyWriter` is itself a `SecurityManager` and sees the same snapshot, so items 1–4
    apply to it; it is also where ceiling identities are reported and `CeilingPrincipal` grants are written.
+
+## 12. Conclusion (2026-10-22): the conversion is the load-bearing change
+
+After the design settled, the maintainer's assessment — shared by Claude — is that **§4.6, converting every
+platform `doPrivileged` to the policy-reducing form, does the heavy lifting, and may be sufficient without the
+ceiling.** The reasoning:
+
+- Once every java.base elevation goes through the policy-reducing form, no `doPrivileged` anywhere reaches full
+  authority. A constructor on wire data can obtain at most the per-class floor of whatever java.base class it
+  reaches; plain checks were already bounded by the non-java.base floors on the stack (§3 invariant).
+  "Deserializing into a privileged context" stops being possible because there is no privileged context left:
+  only per-class least-privilege contexts.
+- The ceiling, in its r3 shape, applies only to the *elevating* forms (§3). In the converted end-state it caps
+  nothing in java.base. It is a safety net for unconverted code, and the §4.6 lint can make unconverted code not
+  exist in the platform.
+
+Two conditions for "sufficient" to hold:
+
+1. **Scope is platform code, not java.base alone.** JGDMS's own modules (`net.jini.*`, `org.apache.river.*`)
+   carry the ~190 true elevations from the JGDMS inventory and floors that include sockets, files and codebase
+   download; a gadget reaching those gets that module's floor. Same conversion, same lint, same triage of
+   context-installation sites (§4.6). Downloaded and third-party code may keep the old forms: their domains are
+   granted little, so their elevations reach little.
+2. **The residual is the per-class floor of deputies**, the same residual r3 accepted once the policy-reducing
+   form was exempt from the ceiling. Its controls — split deputy classes whose floor is the union of their
+   blocks' needs; the polpAudit flag on wildcard connect/write/exec to platform per-class codesources; the
+   static-collection fix (§8); the `getResource`/policy-matching check (§8) — are now the *whole* defence rather
+   than a backstop, and must be done well rather than eventually.
+
+What falls away if the ceiling is not built: `CEILING` and `ceiling()`, sealed domains and `CeilingPrincipal`,
+the `getContext()` split and `hasSealed`, the thread-inheritance questions (§4.4), hand-off capture (§4.5), and
+the `CombinerSecurityManager` changes other than its own two `PermissionCheck` conversions (§11.3). What remains
+is mechanical and auditable: the call-site conversions, a lint, polpAudit floors per class.
+
+The ceiling design (§3–§5) is retained in this note as the documented option for the case where unconverted or
+third-party elevations turn out to matter, or where a per-site bound is wanted on top of per-class floors. It
+should not be built until there is evidence it is needed.
+
+**Revised order (supersedes §10):**
+
+1. §8 fixes: the static-collection union (`doPrivilegedByPolicy` with empty permissions); `checkAuthorized` via
+   `AccessController.checkPermission`; `AccessController` javadoc.
+2. The per-class codesource matching check: what `getResource(caller)` produces for module and non-module
+   classes, and that `ConcurrentPolicyFile`'s matching and polpAudit's writer agree on it. A correct grant that
+   silently does not match is the failure mode that would make everything else look like it works.
+3. Convert java.base (~406 sites, 222 files), triaging installation sites; lint for remaining elevating forms,
+   non-empty limited lists, `AllPermission` in any limited list; the infrastructure allow-list recorded.
+4. Convert JGDMS platform modules the same way; the AllPermission-outside-java.base lint on shipped policies.
+5. polpAudit: per-class floors; deputy-class flags; the documentation-list cross-check.
+6. One deliberate deputy test: a vetted constructor reaching a URL handler (or file provider), confirming that
+   the per-class floor is what bounds it, under polpAudit and then under the condensed policy.
+7. JGDMS gates throw without SM/Policy; then the §6 items (type gate, two-phase decode, `@AtomicSerial` escape
+   rule) on their own schedule.
+8. The ceiling (§3–§5, §10 steps 1–6), only if step 6 or later evidence shows a need.
+
+## 13. Revision 4 (2026-10-23): apply the policy-reducing intersection to every `doPrivileged`
+
+The maintainer's step after §12: **the three-argument form's per-class intersection can be applied to all
+`doPrivileged` forms, in one place.** `executePrivileged` always intersects the caller's per-class policy domain —
+`DomainIdentity(perClassCodeSource(caller), new Permissions(), null, null)` — with whatever context the form supplies.
+Authority under any form is then `caller ∩ ctx ∩ policy(callerClass)`, which is never more than `caller` alone was.
+
+**Why it is safe against impostors.** The limiting domain is derived from `Reflection.getCallerClass()`, not from any
+argument, and it only intersects. A loader that lies about a class's codesource already holds whatever its lying
+`ProtectionDomain` is granted; the per-class domain cannot add to that.
+
+**What it supersedes.**
+- The ceiling (§3–§5): it capped *elevating* forms; with every form reduced by policy there is no elevating form, and
+  nothing to cap. The sections stay as history. The `ScopedValue`, sealed domains, `CeilingPrincipal`, the
+  `getContext()` split, the thread-inheritance questions, hand-off capture, and §11.1–11.2 all fall away.
+- The call-site conversion sweep (§4.6, §12 steps 3–4): ~406 java.base edits and the JGDMS platform edits become one
+  change in `executePrivileged`. Third-party code receives the same bound without being edited. The §4.6 lints for
+  one-argument calls and non-empty limited lists are no longer needed.
+
+**What it needs.**
+1. **An internal raw primitive.** `getResource(caller)` itself calls `doPrivileged`, so universal reduction would
+   recurse; VM initialisation runs before `Policy` exists. `AccessController` needs a non-reducing internal path that
+   nothing outside java.base can reach — the "kernel is the only caller of the raw primitive" line from the JGDMS
+   analysis §2 sketch, for a different reason.
+2. **A per-class cache.** `getResource` builds URIs and a `DomainIdentity` per call. On the hottest security path it
+   must be a `ClassValue<DomainIdentity>` lookup; the resulting context is interned already (`ContextCache`).
+3. **Derive the per-class codesource from the class's own `ProtectionDomain` codesource plus the class name**, for
+   module and non-module classes alike — one source of truth, and the §8 `loader.getResource(clazz.getName())`
+   question disappears. The resulting forms are `jrt:/<module>/<Class>` and `<location>/<Class>`; `ConcurrentPolicyFile`
+   matching and polpAudit's writer must agree on them (§8 check, still required).
+4. **Installation sites.** A `doPrivileged(action, ctx)` whose purpose is to *evaluate* `ctx` (run its combiner, check
+   under its restriction) would now have the installer's class floor appended to the evaluated context. For
+   `CombinerSecurityManager` that floor is broad, so it is a no-op, but the principled fix is the
+   `ContextBuilder.combine(acc)` primitive (§11.3): evaluation without a `doPrivileged`, no limit at all. The
+   "installation site" lint shrinks to: SecurityManagers and policy tooling evaluate with `combine`.
+5. **The static-collection union** (§8): the universal path passes no permissions, so policy alone decides. The public
+   three-argument form either keeps the union for third parties, documented, or loses it; either way it is no longer on
+   java.base's path.
+6. **A transition path.** This is a fail-closed cliff for every library on DirtyChai: each class that calls
+   `doPrivileged` needs a grant. Per-class codesources are `<location>/<Class>`, so the existing `-` codebase wildcard
+   gives a per-module or per-jar grant for free: `grant codebase "jrt:/java.base/-" { … }` expresses today's behaviour
+   as policy, and polpAudit refines it per class over time. The rollout is a policy change, not a flag day. The
+   AllPermission-outside-java.base lint (§3) applies to these coarse grants too.
+
+**Residual, unchanged from §12.** The per-class floors of deputies (socket and file providers, URL handlers,
+`ProcessImpl`, the reflection factory) are now the *only* bound on what a vetted constructor reaches through them. The
+controls are the same and matter more: split deputy classes whose floor is the union of their blocks' needs; the
+polpAudit flag on wildcard connect/write/exec to platform per-class codesources; the §6 escape rule on the finite
+`@AtomicSerial` set; two-phase decode.
+
+**Revised order (supersedes §12's):**
+
+1. The internal raw primitive; `ClassValue` per-class domain cache; per-class codesource derived from the
+   `ProtectionDomain` codesource.
+2. The per-class codesource matching check (§8), now load-bearing: a correct grant that silently does not match makes
+   everything deny.
+3. `executePrivileged`: intersect the per-class domain on every form; `checkAuthorized` via
+   `AccessController.checkPermission`; `AccessController` javadoc rewritten for the new semantics (not Java 8's).
+4. `ContextBuilder.combine(acc)`; `CombinerSecurityManager` and polpAudit's `SecurityPolicyWriter` evaluate with it;
+   `PermissionCheck`/`PermissionOnceCheck` need no change (their one-argument calls are now bounded like everything
+   else, by `policy(CombinerSecurityManager$PermissionCheck)`, which the coarse grant covers).
+5. Shipped coarse grants (`jrt:/<module>/-` per module; per-jar for JGDMS platform jars) so existing deployments run;
+   the AllPermission-outside-java.base lint.
+6. polpAudit: per-class floors; deputy-class flags; condensation from coarse to per-class.
+7. One deliberate deputy test (constructor → URL handler) under the coarse grant, then under the condensed policy.
+8. JGDMS gates throw without SM/Policy; then the §6 items on their own schedule.
+
+**The per-class domain takes principals (decided 2026-10-23 16:01).** It is a four-argument, non-static
+`DomainIdentity`, so `SubjectDomainCombiner` adds the authenticated `Subject`'s principals to it as to any other domain.
+polpAudit therefore records each privileged action's grant *with the principals present when it was observed*, and
+after condensation the per-class floor is split by identity: a deputy's floor under the admin's subject may include
+what it did for the admin; the same deputy under an unauthenticated peer, or no subject, has only what was observed in
+that state — the narrowest floor by construction. This shrinks the deputy residual from "everything the class ever
+did" to "everything the class did for this kind of caller", and it is why the `(class × subject)` context variants are
+the policy's resolution, not cache overhead. Three conditions: (1) the condenser must never widen a principal-qualified
+grant into an unqualified one — same lint family as codebase-only `AllPermission` (JGDMS analysis M3); (2) audit runs
+must have identity bound the way production does, or the floor records unqualified grants for whatever the harness
+exercised without a subject; (3) principals come only from the authenticated `Subject` (TLS, Kerberos, SPIFFE), never
+from peer-claimed domains (`RemoteContextCodec`).
+
+**Still open:** whether the `limit` should be kept out of the context's domain array (a separate field intersected at
+`implies` time, never handed to combiners) rather than appended — the appended form is what the three-argument
+implementation does today and what makes installation sites see it; a separate field would make `combine` unnecessary
+but is a new field on an interned, VM-visible class. Decide when the first installation site other than the SM is found.
+
+## 14. Prior art (2026-10-23)
+
+A three-researcher survey (~60 primary sources) is at JGDMS `docs/PRIOR-ART-privilege-design-2026-10-23.md`. Its
+per-mechanism verdicts, each stated as a negative with the searches that established it:
+
+- **§13 (every `doPrivileged` policy-bounded by caller class): no precedent found.** JEP 140 let privileged code name
+  its own bound; Elasticsearch entitlements removed the stack intersection and trivially allow every JDK module except
+  `java.desktop`/`java.xml`; JEP 486 removed enforcement. The closest precedent for observe-runs → infer policy →
+  intersect all frames is **ZTD_JAVA (2023, arXiv 2310.14117)**: DaCapo median overhead −0.03% vs 21.06% for the
+  SecurityManager, keyed on dependency namespaces, never touches `doPrivileged`. Read it for how it handled deputies.
+  Koved/Pistoia (OOPSLA 2002; Pistoia 2005 "tainted privileged code") is the static complement to the §13 deputy test.
+- **Receiver provenance (handover §4.4): no precedent for the mechanism.** Two citations to distinguish from:
+  **Trishul** (VU Amsterdam IR-CS-45, modified Kaffe) — a method's initial context taint includes the taint of `this`,
+  policies match `thisTaint`, enforced at runtime, +167% CPU-bound with full propagation and shadow memory; and
+  **IBAC** (Pistoia/Banerjee/Naumann, IEEE S&P 2007) — permission sets as per-value labels checked at the same points
+  as stack inspection *and through privileged blocks*, static prototype only. **Design consequence:** .NET removed
+  `Deny` because `Assert` masked it; a receiver provenance domain below a `doPrivileged` frame is masked by the cut
+  the same way — on exactly the gadget path. Provenance collection must continue past privileged frames (IBAC's
+  choice): provenance domains are the one case where the §4 "sticky" behaviour is required, and the proxy objection
+  does not apply to them. Laminar labels by *allocation* context — a trap: a deserialized object would carry the
+  decoder's label, not the peer's. `LiveStackFrame` is package-private and gated by a permission JEP 486 disabled.
+- **Schema-digest gating (Atomic DER): no production system found that gates decoding on a schema digest.** Avro's
+  fingerprints "are not meant to provide any security guarantees"; Cap'n Proto IDs are name-derived. Almost no
+  hash-keyed authorization system canonicalises its input (identity = shipped bytes); the exceptions are Nix, Authenticode
+  and Avro's Parsing Canonical Form. Every hashed canonical form has produced a "verifier hashes form A, consumer acts
+  on form B" bug (CMS BER/DER, BIP 66, XML C14N, CBOR 7049→8949, JCS `-0`); the fix is always to reject non-distinguished
+  input before hashing and act on the hashed bytes — which DER-by-definition gives for free, provided the decoder rejects
+  non-DER. "Compress the public schema, never the data" has no name in the literature but exact precedents: the BREACH
+  authors' "completely different compression context" and HPACK's static table + never-indexed literals (RFC 7541 §7.1.3).
+
