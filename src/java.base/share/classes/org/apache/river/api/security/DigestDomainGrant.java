@@ -35,7 +35,6 @@ import java.util.Set;
 import java.util.Objects;
 import java.security.DigestCodeSource;
 import au.zeus.jdk.net.Uri;
-import au.zeus.jdk.authorization.policy.CodeSourceKey;
 
 /**
  * DigestDomainGrant is a subclass of ProtectionDomainGrant that represents

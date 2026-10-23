@@ -88,6 +88,11 @@ class ClassLoaderGrant extends PrincipalGrant {
         return implies(pal);
     }
 
+    @Override
+    public boolean implies(CodeSource codeSource, Principal[] pal) {
+        return false; // Grant is dynamic only.
+    }
+
 	@Override
     public boolean isVoid() {
         return loaderRef == null || loaderRef.get() == null || getPermissions().isEmpty();
