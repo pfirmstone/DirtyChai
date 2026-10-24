@@ -504,10 +504,57 @@ argument, and it only intersects. A loader that lies about a class's codesource 
    analysis §2 sketch, for a different reason.
 2. **A per-class cache.** `getResource` builds URIs and a `DomainIdentity` per call. On the hottest security path it
    must be a `ClassValue<DomainIdentity>` lookup; the resulting context is interned already (`ContextCache`).
-3. **Derive the per-class codesource from the class's own `ProtectionDomain` codesource plus the class name**, for
-   module and non-module classes alike — one source of truth, and the §8 `loader.getResource(clazz.getName())`
-   question disappears. The resulting forms are `jrt:/<module>/<Class>` and `<location>/<Class>`; `ConcurrentPolicyFile`
-   matching and polpAudit's writer must agree on them (§8 check, still required).
+3. **The per-class domain carries the calling `Class` (decided 2026-10-24).** It is
+   `DomainIdentity(pd.getCodeSource(), ∅, pd.getClassLoader(), null, callerClass)` with `pd = callerClass.getProtectionDomain()`
+   and a new **strong** `Class<?> callerClass` field included in `equals`/`hashCode`. Nothing is synthesised: the
+   codesource is the PD's own — a *verified* `DigestCodeSource` for code a `SecureClassLoader` defined from a downloaded
+   jar, the jar URI for local code, `jrt:/<module>` for modules — and the loader is the PD's, so `ClassLoaderGrant` and
+   `DigestDomainGrant` match. `getResource(caller)` is deleted; its non-module branch called
+   `callerLoader.getResource(clazz.getName())`, which on a `PreferredClassLoader` can reach the network — a codebase fetch
+   inside every `doPrivileged`. Consequences:
+   - **Existing grants match unchanged.** `DigestDomainGrant.implies` compares the jar digest and covers every class the
+     loader defined from that jar, and no class added to the loader later from another jar (that was the point of
+     granting to the digest). A `DigestCodeSource` is verified only by local construction — `RemoteContextCodec.readDigest`
+     codesources arrive unverified and stay so — so no peer can mint a per-class domain that matches a digest grant.
+   - **Per-class refinement is one `class` qualifier on `PermissionGrant`**, valid with any codesource kind:
+     `grant codebase "digest:sha256:D", class "pkg.Cls" { … }`, `grant codebase "jrt:/java.base", class "…" { … }`. The
+     digest or URI identifies the jar; the name selects a member within it (consistent with "a name is not an identity").
+     polpAudit's writer emits the qualifier from the domain's class; the condenser drops it where a jar's classes share a
+     floor. This is the only policy-grammar change.
+   - **Dynamic code.** A proxy's elevation ceiling is whatever its prepare step granted its loader — the advisory
+     `PERMISSIONS.LIST` condensed by `ProxyPolicyGenerator` into the `GrantPermission` ceiling — intersected with its own
+     domain. Four `-dl` sites call `doPrivileged` today (`Bootstrap.getProxyLoader`, phoenix `AID.classLoader`,
+     `SpaceProxy2` :310, reggie `Item` :105; two via `Security.doPrivileged`), all mechanical. They convert to plain
+     `AccessController.doPrivileged`; the proxy lint forbids calling through a platform wrapper, because the wrapper's
+     per-class floor, not the proxy's, becomes the bound.
+   - **`Security.doPrivileged` and `Security.doAs*` are removed (decided 2026-10-24 10:27).** `Security.doPrivileged`
+     (`Security.java:712`, `:746`) is an outer one-argument `doPrivileged` — making `Security` the caller — around
+     `doPrivileged(action, createPrivilegedContext(caller, acc))`. Under §13 any wrapper that calls `doPrivileged` on a
+     caller's behalf is a confused deputy by construction: its per-class floor must be the union of every caller's
+     needs, which is the shape a gadget wants to reach. Its original purpose (elevate only to the caller's own domain)
+     is now what every `doPrivileged` does. ~~Its one extra property — folding the inherited `acc` in so the stack is
+     never cut — needs no wrapper: `AccessController.doPrivileged(action, AccessController.getContext())` at the site.~~
+     **Struck 2026-10-24 12:30 (agent finding, confirmed against `Security.java` and analysis B5):** the wrapper's
+     `createPrivilegedContext(caller, acc)` carries only the caller's own domain and uses `acc` for its combiner; it
+     does not keep the inherited stack. The exact equivalent is therefore the **one-argument** form.
+     Call sites in `main` (VERIFIED 2026-10-24, scoped grep): 32 files — jgdms-platform 8, jgdms-jeri 18,
+     pref-class-loader 1, url-integrity 1, activation 1, phoenix 1, services 2 (61 call sites in 29 files by the
+     converting agent's count); ~~none in `qa`~~ — **wrong:** `qa` holds tests of the wrapper itself (`FakeCaller`,
+     `DoPrivilegedTest`, `DoPrivilegedExceptionTest`, jtreg `Security/doPrivileged/`), which are deleted with it.
+     ~~**Conversion rule:** semantics-preserving first — `doPrivileged(action, AccessController.getContext())` … and the
+     one-argument form only later~~ **Struck 2026-10-24 12:30:** that rule was backwards. The two-argument snapshot
+     *adds* every inherited domain and is narrower than the wrapper (it can throw where the old code did not, e.g.
+     static initialisers reading properties). **Conversion rule: the one-argument `AccessController.doPrivileged(action)`,
+     which is the exact equivalent** (caller's own domain; the fork applies subject principals in `getContext()`
+     regardless of form) and becomes `caller ∩ policy(callerClass)` under §13. `doAs`/`doAsPrivileged` were already
+     removed on the branch (2026-10-23); zero callers. Branch: `claude/remove-security-doprivileged`.
+   - **Strong reference, not weak.** A weak `Class` reference would make a stored context's authority depend on when the
+     collector ran: `doPrivileged(action, stored)` passing one day and denying the next with no change to policy, code
+     or input, unreproducibly — and every captured context (executors, `Subject.doAs` snapshots, the SM's caches) would
+     carry the same nondeterminism. A `ProtectionDomain` already holds its `ClassLoader` strongly, so every context
+     today pins its domains' loaders for as long as it is reachable; the class field pins the same loader for the same
+     lifetime. A context must mean the same thing for as long as it exists. Not a trade-off; the weak variant is a
+     correctness defect.
 4. **Installation sites.** A `doPrivileged(action, ctx)` whose purpose is to *evaluate* `ctx` (run its combiner, check
    under its restriction) would now have the installer's class floor appended to the evaluated context. For
    `CombinerSecurityManager` that floor is broad, so it is a no-op, but the principled fix is the
@@ -592,4 +639,10 @@ per-mechanism verdicts, each stated as a negative with the searches that establi
   input before hashing and act on the hashed bytes — which DER-by-definition gives for free, provided the decoder rejects
   non-DER. "Compress the public schema, never the data" has no name in the literature but exact precedents: the BREACH
   authors' "completely different compression context" and HPACK's static table + never-indexed literals (RFC 7541 §7.1.3).
+
+**Receiver provenance is now designed** in JGDMS `docs/DESIGN-serial-data-identity-2026-10-23.md`: a sealed
+`DomainIdentity` over the schema leaf digest (`DigestCodeSource`, verified path) with the delivering connection's
+principals, passed explicitly from the gate (the dispatcher decodes before the Subject wrap — N1), stamped on every
+decoded `@AtomicSerial` object, collected from frame receivers by the native walk continuing past the privileged frame,
+fail-closed when a compiled frame has dropped `this`. It composes with §13 by intersection.
 
