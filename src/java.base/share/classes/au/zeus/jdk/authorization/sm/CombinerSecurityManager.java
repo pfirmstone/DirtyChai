@@ -109,7 +109,6 @@ extends SecurityManager implements CachingSecurityManager {
     private final ConcurrentMap<AccessControlContext, AccessControlContext> contextCache;
     private final ConcurrentMap<Object, NavigableSet<Permission>> checked;
     private final Guard g;
-    private final Action action;
     private final Executor executor;
     private final Comparator<Referrer<Permission>> permCompare;
     private final AccessControlContext SMConstructorContext;
@@ -171,7 +170,6 @@ extends SecurityManager implements CachingSecurityManager {
                 Referrer<NavigableSet<Permission>>>();
         checked = RC.concurrentMap(refmap, Ref.TIME, Ref.STRONG, 20000L, 20000L);
         g = new SecurityPermission("getPolicy");
-        action = new Action();
         // The intent here is to parallelise security checks as well as weed
         // out blocking SocketPermission's to execute them in parallel to 
         // reduce the wait on network IO.
@@ -296,20 +294,15 @@ extends SecurityManager implements CachingSecurityManager {
         if (delegateContext == null ) {
             final AccessControlContext finalExecutionContext = executionContext;
             // Create a new AccessControlContext with the DelegateDomainCombiner
+            // Then run the combiner, which returns a new ACC containing
+            // a context containing one DelegateProtectionDomain
             delegateContext = ScopedValue.where(TRUSTED_RECURSIVE_CALL, count + 1).call(
             new CallableOp<AccessControlContext, SecurityException>(){
                 @Override
                 public AccessControlContext call() throws SecurityException {
-                    return Context.create(finalExecutionContext, dc);
+                    return Context.goCombiner(Context.create(finalExecutionContext, dc));
                 }
             });
-            // Optimise the delegateContext, this runs the DelegateDomainCombiner
-            // and returns the AccessControlContext.
-            // This is a mutator method, the delegateContext returned
-            // is actually the same object passed in, after it is
-            // mutated, but just in case that changes in future we
-            // return it.
-            delegateContext = AccessController.doPrivileged(action, delegateContext);
             final AccessControlContext delContext = delegateContext;
             
             ScopedValue.where(TRUSTED_RECURSIVE_CALL, count + 1).call(
@@ -358,16 +351,6 @@ extends SecurityManager implements CachingSecurityManager {
                 }
             }
         );
-    }
-    
-    // Action retrieves the optimised AccessControlContext.
-    private static class Action implements PrivilegedAction<AccessControlContext> {
-        private Action(){}
-        
-        public AccessControlContext run(){
-            return AccessController.getContext();
-        }
-        
     }
     
     private class DelegateDomainCombiner implements DomainCombiner {
@@ -762,6 +745,10 @@ extends SecurityManager implements CachingSecurityManager {
 
         static boolean check(AccessControlContext context, Permission perm, boolean ephemeral){
             return builder.implies(context, perm, ephemeral);
+        }
+
+        static AccessControlContext goCombiner(AccessControlContext acc){
+            return builder.combine(acc);
         }
         
     }

@@ -116,6 +116,10 @@ public final class AccessControlContext {
         MASK = slots - 1;
     }
 
+    static boolean hasStarted(){
+        return CONTEXTS != null;
+    }
+
     @SuppressWarnings("removal")
     static Debug getDebug()
     {
@@ -602,11 +606,16 @@ public final class AccessControlContext {
      * @return 
      */
     AccessControlContext intersectionOfPermsDoWithCombiner(DomainCombiner dc, ProtectionDomain permDomain){
-        ProtectionDomain [] domains = new ProtectionDomain[context.length + 1];
-        for (int i = 0, len = context.length; i < len; i++){
-            domains[i] = context [i];
+        ProtectionDomain [] domains = null;
+        if (context != null){
+            domains = new ProtectionDomain[context.length + 1];
+            for (int i = 0, len = context.length; i < len; i++){
+                domains[i] = context [i];
+            }
+            domains[context.length] = permDomain;
+        } else {
+            domains = new ProtectionDomain[]{permDomain};
         }
-        domains[context.length] = permDomain;
         return create(domains, this.privilegedContext, dc, this.isPrivileged);
     }
 
@@ -1108,6 +1117,15 @@ public final class AccessControlContext {
         public boolean implies(AccessControlContext acc, Permission perm, boolean ephemeral){
             return acc.implies(perm, ephemeral);
         }
-        
+
+        /**
+         * Runs the combiner without a stack walk for CombinerSecurityManager.
+         * @param acc, the AccessControlContext
+         * @return a new AccessControlContext instance.
+         */
+        public AccessControlContext combine(AccessControlContext acc){
+            return acc.goCombiner(acc.context, acc);
+        }
+
     }
 }

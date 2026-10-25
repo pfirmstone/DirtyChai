@@ -21,6 +21,7 @@ package org.apache.river.api.security;
 import java.io.InvalidObjectException;
 import java.io.ObjectInputStream;
 import java.security.CodeSource;
+import java.security.DomainIdentity;
 import java.security.Permission;
 import java.security.Principal;
 import java.security.ProtectionDomain;
@@ -102,10 +103,20 @@ import au.zeus.jdk.net.Uri;
 
 	@Override
     public boolean implies(ProtectionDomain pd) {
-        ClassLoader myLoader = loaderRef != null ? loaderRef.get(): null;
+		if (pd instanceof DomainIdentity di && !(pd.getCodeSource() instanceof DigestCodeSource)){
+			ProtectionDomain callerDomain = di.getCallerDomain();
+			if (callerDomain == null) return false;
+			if (!impliesPD(callerDomain)) return false;
+		} else {
+			if (!impliesPD(pd)) return false;
+		}
+        return implies(getPrincipals(pd));
+    }
+
+	private boolean impliesPD(ProtectionDomain pd){
+		ClassLoader myLoader = loaderRef != null ? loaderRef.get(): null;
         if (myLoader == null || pd == null || pd.getClassLoader() != myLoader) return false;
-        if (!implies(getPrincipals(pd))) return false;
-        CodeSource cs = pd.getCodeSource();
+		CodeSource cs = pd.getCodeSource();
 		if (cs instanceof DigestCodeSource dcs) {
 			if (dcs.unverified()) return false;
 			for (DigestCodeSource dcs2 : digestCodeSources) {
@@ -113,7 +124,7 @@ import au.zeus.jdk.net.Uri;
 			}
 		}
 		return false;
-    }
+	}
 
 	 
     public boolean implies(ClassLoader cl, Principal[] pal) {

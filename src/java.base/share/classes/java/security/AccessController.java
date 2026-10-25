@@ -25,6 +25,7 @@
 
 package java.security;
 
+import au.zeus.jdk.net.Uri;
 import java.lang.ref.Reference;
 import java.net.MalformedURLException;
 import java.net.URISyntaxException;
@@ -320,7 +321,8 @@ public final class AccessController {
     @CallerSensitive
     public static <T> T doPrivileged(PrivilegedAction<T> action)
     {
-        return executePrivileged(action, null, Reflection.getCallerClass());
+        Class<?> caller = Reflection.getCallerClass();
+        return executePrivileged(action, limited(null,caller), caller);
     }
 
     /**
@@ -352,13 +354,13 @@ public final class AccessController {
     public static <T> T doPrivilegedWithCombiner(PrivilegedAction<T> action) {
         @SuppressWarnings("removal")
         AccessControlContext acc = getStackAccessControlContext();
+        Class<?> caller = Reflection.getCallerClass();
         if (acc == null) {
-            return AccessController.doPrivileged(action);
+            return executePrivileged(action, limited(acc,caller), caller);
         }
         @SuppressWarnings("removal")
         DomainCombiner dc = acc.getAssignedCombiner();
-        return AccessController.doPrivileged(action,
-             preserveCombiner(dc, Reflection.getCallerClass()));
+        return executePrivileged(action,limited(preserveCombiner(dc, caller), caller), caller);
     }
 
 
@@ -394,7 +396,7 @@ public final class AccessController {
     {
         if (action == null) throw new NullPointerException("action cannot be null");
         Class<?> caller = Reflection.getCallerClass();
-        return executePrivileged(action, context, caller);
+        return executePrivileged(action, limited(context, caller), caller);
     }
 
 
@@ -446,15 +448,7 @@ public final class AccessController {
             throw new NullPointerException("null permissions parameter");
         }
         Class<?> caller = Reflection.getCallerClass();
-        CodeSource cs = getResource(caller);
-        ProtectionDomain pd = new DomainIdentity(cs, toPermissions(perms), null, null);
-        if (context == null){
-            context = AccessControlContext.create(
-                    new ProtectionDomain[]{pd}, (AccessControlContext) null, true);
-        } else {
-            context = context.intersectionPermissions(pd);
-        }
-        return executePrivileged(action, context, caller);
+        return executePrivileged(action, limited(context, caller, toPermissions(perms)), caller);
     }
 
 
@@ -512,15 +506,7 @@ public final class AccessController {
         @SuppressWarnings("removal")
         DomainCombiner dc = parent.getCombiner();
         Class<?> caller = Reflection.getCallerClass();
-        CodeSource cs = getResource(caller);
-        ProtectionDomain pd = new DomainIdentity(cs, toPermissions(perms), null, null);
-        if (context == null){
-            context = AccessControlContext.create(new ProtectionDomain[]{pd}, dc, true);
-        } else {
-            if (dc == null) dc = context.getCombiner();
-            context = context.intersectionOfPermsDoWithCombiner(dc, pd);
-        }
-        return executePrivileged(action, context, caller);
+        return executePrivileged(action, limited(context, caller, dc, toPermissions(perms)), caller);
     }
 
     /**
@@ -560,7 +546,7 @@ public final class AccessController {
         @SuppressWarnings("removal")
         Class<?> caller = Reflection.getCallerClass();
         try {
-            return executePrivileged(action, null, caller);
+            return executePrivileged(action, limited(null, caller), caller);
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
@@ -602,13 +588,19 @@ public final class AccessController {
     {
         @SuppressWarnings("removal")
         AccessControlContext acc = getStackAccessControlContext();
-        if (acc == null) {
-            return AccessController.doPrivileged(action);
+        Class<?> caller = Reflection.getCallerClass();
+        try {
+            if (acc == null) {
+                return executePrivileged(action, limited(null, caller), caller);
+            }
+            @SuppressWarnings("removal")
+            DomainCombiner dc = acc.getAssignedCombiner();
+            return executePrivileged(action, limited( preserveCombiner(dc, caller), caller), caller);
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw wrapException(e);
         }
-        @SuppressWarnings("removal")
-        DomainCombiner dc = acc.getAssignedCombiner();
-        return AccessController.doPrivileged(action,
-             preserveCombiner(dc, Reflection.getCallerClass()));
     }
 
     /**
@@ -669,7 +661,7 @@ public final class AccessController {
     {
         Class<?> caller = Reflection.getCallerClass();
         try {
-            return executePrivileged(action, context, caller);
+            return executePrivileged(action, limited(context, caller), caller);
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
@@ -841,16 +833,8 @@ public final class AccessController {
             throw new NullPointerException("null permissions parameter");
         }
         Class<?> caller = Reflection.getCallerClass();
-        CodeSource cs = getResource(caller);
-        ProtectionDomain pd = new DomainIdentity(cs, toPermissions(perms), null, null);
-        if (context == null){
-            context = AccessControlContext.create(
-                    new ProtectionDomain[]{pd}, (AccessControlContext) null, true);
-        } else {
-            context = context.intersectionPermissions(pd);
-        }
         try {
-            return executePrivileged(action, context, caller);
+            return executePrivileged(action, limited(context, caller, toPermissions(perms)), caller);
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
@@ -923,18 +907,8 @@ public final class AccessController {
         @SuppressWarnings("removal")
         DomainCombiner dc = parent.getCombiner();
         Class<?> caller = Reflection.getCallerClass();
-        CodeSource cs = getResource(caller);
-        ProtectionDomain pd = new DomainIdentity(cs, toPermissions(perms), null, null);
-        if (context == null){
-            context = AccessControlContext.create(
-                    new ProtectionDomain[]{pd},
-                    dc, true);
-        } else {
-            if (dc == null) dc = context.getCombiner();
-            context = context.intersectionOfPermsDoWithCombiner(dc, pd);
-        }
         try {
-            return executePrivileged(action, context, caller);
+            return executePrivileged(action, limited(context, caller, dc, toPermissions(perms)), caller);
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
@@ -1052,67 +1026,115 @@ public final class AccessController {
         }
         return p;
     }
+
+    /**
+     * Unlimited privilege call.
+     */
+    @CallerSensitive
+    private static <T> T doUnlimited(PrivilegedAction<T> action)
+    {
+        Class<?> caller = Reflection.getCallerClass();
+        return executePrivileged(action, null, caller);
+    }
     
     private static CodeSource getResource(Class<?> clazz){
         // Don't use lambda, in case of bootstrap issues.
-        return doPrivileged(new PrivilegedAction<CodeSource>(){
-            @Override
-            public CodeSource run() {
-                // Reuse Certificates in case there are multiple instances
-                // with different signers and they need to be destinguished?
-                // This could interfere with Certificate based grants?  No,
-                // Certificate grants shouldn't be broad brushed, it should be 
-                // a combination of URI, Certificates and Principals that grant 
-                // permission, otherwise it's bad policy, similar to AllPermission.
-                // EG URL spoofed address might have URI and Principals, but not
-                // Certificates, we don't want to grant imposter code permission,
-                // all conditions must be satisfied.
-                ProtectionDomain callerDomain = clazz.getProtectionDomain();
-                CodeSource callerCodeSource = callerDomain.getCodeSource();
-                Module module = clazz.getModule();
-                String moduleName = module != null ? module.getName() : null;
-                if (moduleName != null){
-                    StringBuilder sb = new StringBuilder();
-                    sb.append("jrt:/").append(moduleName).append("/").append(clazz.getName());
-                    try {
-                        URL url = new URI(sb.toString()).toURL();
-                        return new CodeSource(new URI(sb.toString()).toURL(), 
-                                callerCodeSource != null?
-                                callerCodeSource.getCertificates() : null);
-                    } catch (MalformedURLException | URISyntaxException e){
-                        // ✅ SECURITY: Return null CodeSource on exception.
-                        // A null CodeSource cannot match any policy grants,
-                        // preventing privilege escalation if URI validation fails.
-                        // This fail-secure approach ensures that malformed URIs
-                        // cannot be exploited to bypass policy enforcement.
-                        return null;
-                    }
-                }
-                // For non module code.
-                ClassLoader callerLoader = clazz.getClassLoader();
-                URL url = callerLoader != null ? callerLoader.getResource(clazz.getName()) : null;
-                if (url != null) return new CodeSource(url, callerCodeSource != null?
-                                callerCodeSource.getCertificates() : null);
-                // bootstrap workaround for null modules and null ClassLoaders
-                if (callerCodeSource != null){
-                    try {
-                        String urlstring = callerCodeSource.getLocationNoFragString();
-                        StringBuilder sb = new StringBuilder();
-                        sb.append(urlstring);
-                        sb.append("/").append(clazz.getName());
-                        return new CodeSource(new URI(sb.toString()).toURL(),
-                                callerCodeSource.getCertificates());
-                    } catch (MalformedURLException | URISyntaxException ex) {
-                        // ✅ SECURITY: Return null CodeSource on exception.
-                        // A null CodeSource cannot match any policy grants,
-                        // preventing privilege escalation if URI validation fails.
-                        // This fail-secure approach ensures that malformed URIs
-                        // cannot be exploited to bypass policy enforcement.
-                        return null;
-                    }
-                }
+        
+        // Reuse Certificates in case there are multiple instances
+        // with different signers and they need to be destinguished?
+        // This could interfere with Certificate based grants?  No,
+        // Certificate grants shouldn't be broad brushed, it should be 
+        // a combination of URI, Certificates and Principals that grant 
+        // permission, otherwise it's bad policy, similar to AllPermission.
+        // EG URL spoofed address might have URI and Principals, but not
+        // Certificates, we don't want to grant imposter code permission,
+        // all conditions must be satisfied.
+        ProtectionDomain callerDomain = clazz.getProtectionDomain();
+        CodeSource callerCodeSource = callerDomain.getCodeSource();
+        Module module = clazz.getModule();
+        String moduleName = module != null ? module.getName() : null;
+        if (moduleName != null){
+            StringBuilder sb = new StringBuilder();
+            String className = clazz.getName();
+            int index = className.indexOf('$');
+            if (index > 0){
+                className = className.substring(0, index);
+            }
+            sb.append("jrt:/").append(moduleName).append("/").append(className);
+            try {
+                return new CodeSource(Uri.escapeAndCreate(sb.toString()).toURL(), 
+                        callerCodeSource != null?
+                        callerCodeSource.getCertificates() : null);
+            } catch (MalformedURLException | URISyntaxException e){
+                // SECURITY: Return null CodeSource on exception.
+                // A null CodeSource cannot match any policy grants,
+                // preventing privilege escalation if URI validation fails.
+                // This fail-secure approach ensures that malformed URIs
+                // cannot be exploited to bypass policy enforcement.
                 return null;
             }
-        });
+        }
+            
+        // bootstrap workaround for null modules and null ClassLoaders
+        if (callerCodeSource != null){
+            try {
+                String urlstring = callerCodeSource.getLocationNoFragString();
+                StringBuilder sb = new StringBuilder();
+                sb.append(urlstring);
+                String className = clazz.getName();
+                int index = className.indexOf('$');
+                if (index > 0){
+                    className = className.substring(0, index);
+                }
+                sb.append("/").append(className);
+                return new CodeSource(Uri.escapeAndCreate(sb.toString()).toURL(),
+                        callerCodeSource.getCertificates());
+            } catch (MalformedURLException | URISyntaxException ex) {
+                // SECURITY: Return null CodeSource on exception.
+                // A null CodeSource cannot match any policy grants,
+                // preventing privilege escalation if URI validation fails.
+                // This fail-secure approach ensures that malformed URIs
+                // cannot be exploited to bypass policy enforcement.
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private static AccessControlContext limited(AccessControlContext context,
+                                                Class<?> caller,
+                                                DomainCombiner combiner,
+                                                PermissionCollection<Permission> perms){
+        if (AccessControlContext.hasStarted()){
+            return doUnlimited(new PrivilegedAction<AccessControlContext>(){
+                @Override
+                public AccessControlContext run() {
+                    CodeSource cs = caller != null ? getResource(caller) : null;
+                    ProtectionDomain pd = new DomainIdentity(cs, perms, null, null,
+                                caller != null ? getProtectionDomain(caller) : null);
+                    if (context == null){
+                        return AccessControlContext.create(
+                                new ProtectionDomain[]{pd},
+                                (AccessControlContext) null,
+                                combiner, true);
+                    } else {
+                        if (combiner != null){
+                            return context.intersectionOfPermsDoWithCombiner(combiner, pd);
+                        } else {
+                            return context.intersectionPermissions(pd);
+                        }
+                    }
+                }
+            });
+        }   
+        return context;
+    }
+
+    private static AccessControlContext limited(AccessControlContext context, Class<?> caller, PermissionCollection<Permission> perms){
+        return limited(context, caller, null, perms);
+    }
+
+    private static AccessControlContext limited(AccessControlContext context, Class<?> caller){
+        return limited(context, caller, null, null);
     }
 }

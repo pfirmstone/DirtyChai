@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -117,6 +117,7 @@ public final class DomainIdentity extends ProtectionDomain {
     private final Set<Principal> principals;
     private final SortedSet<Permission> permissions;
     private final CodeSource uriCS;
+    private final ProtectionDomain callerDomain;
     
     /**
      * Creates a new {@code ProtectionDomain} qualified by the given
@@ -152,11 +153,49 @@ public final class DomainIdentity extends ProtectionDomain {
                           ClassLoader classloader,
                           Principal[] principals) 
     {
+        this(codesource, permissions, classloader, principals, null);
+    }
+
+    /**
+     * Creates a new {@code ProtectionDomain} qualified by the given
+     * {@code CodeSource}, permissions, {@code ClassLoader} and array
+     * of principals. If permissions is not {@code null}, then
+     * {@code setReadOnly()} will be called on the passed in permissions.
+     * <p>
+     * The permissions granted to this domain include both the permissions
+     * passed to this constructor, and any permissions granted to this domain
+     * by the current policy at the time a permission is checked.
+     * <p>
+     * This constructor is typically used by
+     * {@link SecureClassLoader ClassLoaders}
+     * and {@link DomainCombiner DomainCombiners} which delegate to the
+     * {@code Policy} object to actively associate the permissions granted to
+     * this domain. This constructor affords the
+     * policy provider the opportunity to augment the supplied
+     * {@code PermissionCollection} to reflect policy changes.
+     *
+     * @param codesource the {@code CodeSource} associated with this domain
+     * @param permissions the permissions granted to this domain
+     * @param classloader the {@code ClassLoader} associated with this domain
+     * @param principals the array of {@code Principal} objects associated
+     * with this domain. The contents of the array are copied to protect against
+     * subsequent modification.
+     * @param callerDomain that called an {@link AccessController AccessController#doPrivileged} method.
+     * @see Policy#refresh
+     * @see Policy#getPermissions(ProtectionDomain)
+     * @since 27
+     */
+    DomainIdentity(CodeSource codesource,
+                          PermissionCollection<? extends Permission> permissions,
+                          ClassLoader classloader,
+                          Principal[] principals,
+                          ProtectionDomain callerDomain){
         super(codesource, permissions, classloader, principals);
         this.principals = principals != null ? new HashSet<>(Arrays.asList(principals)): null; 
         this.permissions = permissions != null ? permissionsToSet(permissions) : null;
         this.uriCS = codesource instanceof DigestCodeSource ? codesource : 
                 codesource!= null ? new UriCodeSource(codesource) : null;
+        this.callerDomain = callerDomain;
         int hash = 7;
         hash = 7 * hash + (hasAllPerm() ? 1231 : 1237);
         hash = 7 * hash + getClass().hashCode();
@@ -165,6 +204,7 @@ public final class DomainIdentity extends ProtectionDomain {
         hash = 7 * hash + permissionsHashCode(permissions);
         hash = 7 * hash + Objects.hashCode(classloader);
         hash = 7 * hash + Objects.hashCode(this.principals);
+        hash = 7 * hash + Objects.hashCode(callerDomain);
         hashcode = hash;
     }
     
@@ -186,6 +226,7 @@ public final class DomainIdentity extends ProtectionDomain {
     {
         super(codesource, permissions);
         this.principals = null;
+        this.callerDomain = null;
         this.permissions = permissions != null ? permissionsToSet(permissions) : null;
         this.uriCS = codesource instanceof DigestCodeSource ? codesource : 
                 codesource!= null ? new UriCodeSource(codesource) : null;
@@ -219,9 +260,18 @@ public final class DomainIdentity extends ProtectionDomain {
             }
             if (!Objects.equals(this.principals, other.principals)) return false;
             if (hasAllPerm() && other.hasAllPerm()) return true;
+            if (!Objects.equals(this.callerDomain, other.callerDomain)) return false;
             return Objects.equals(permissions, other.permissions);
         }
         return false;
+    }
+
+    /**
+     * Returns the Class that made a limited doPrivilged call, may be null.
+     * @return the Class that made a limited doPrivilged call, may be null.
+     */
+    public ProtectionDomain getCallerDomain(){
+        return callerDomain;
     }
     
     /**
