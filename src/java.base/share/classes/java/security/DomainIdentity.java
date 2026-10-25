@@ -259,8 +259,8 @@ public final class DomainIdentity extends ProtectionDomain {
                 if (!Objects.equals(this.getCodeSource(), other.getCodeSource())) return false;
             }
             if (!Objects.equals(this.principals, other.principals)) return false;
-            if (hasAllPerm() && other.hasAllPerm()) return true;
             if (!Objects.equals(this.callerDomain, other.callerDomain)) return false;
+            if (hasAllPerm() && other.hasAllPerm()) return true;
             return Objects.equals(permissions, other.permissions);
         }
         return false;
