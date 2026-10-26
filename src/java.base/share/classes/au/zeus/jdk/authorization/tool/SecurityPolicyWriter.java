@@ -423,14 +423,35 @@ public class SecurityPolicyWriter extends CombinerSecurityManager{
 //                          signedBy "signer_names";
 //                      ...
 //                  };
+                    Map<String, String[]> prePolpAudit = new HashMap<>(4);
+                    prePolpAudit.put("jrt:/java.base/java.util.Arrays", 
+                            new String []{
+                                "    permission java.util.PropertyPermission \"java.util.Arrays.useLegacyMergeSort\", \"read\";\n"
+                            });
+                    prePolpAudit.put("jrt:/java.base/sun.security.action.GetPropertyAction",
+                            new String[]{
+                                "    permission java.util.PropertyPermission \"stackwalk.debug\", \"read\";\n",
+                                "    permission java.util.PropertyPermission \"user.dir\", \"read\";\n"
+                            });
+                    prePolpAudit.put("jrt:/java.base/sun.security.util.SecurityProperties",
+                            new String[]{
+                                "    permission java.security.SecurityPermission \"getProperty.jdk.io.permissionsUseCanonicalPath\";\n",
+                                "    permission java.util.PropertyPermission \"jdk.io.permissionsUseCanonicalPath\", \"read\";\n"
+                            });
+                    prePolpAudit.put("jrt:/java.base/java.lang.Class",
+                            new String[]{
+                                "    permission java.lang.reflect.ReflectPermission \"suppressAccessChecks\";\n"
+                            });
 
                     StringBuilder grant = new StringBuilder(1024);
                     Set<String> written = new HashSet<>();// to avoid duplicate permission lines in a grant block
+                    List<String> toAppend = new ArrayList<>();
                     Iterator<Entry<ProtectionDomain,Collection<Permission>>> it 
                             = domainPermissions.entrySet().iterator();
                     while (it.hasNext()){
                         grant.setLength(0);
                         written.clear();
+                        toAppend.clear();
                         Entry<ProtectionDomain,Collection<Permission>> entry = it.next();
                         try {
                             ProtectionDomain pd = entry.getKey();
@@ -502,7 +523,18 @@ public class SecurityPolicyWriter extends CombinerSecurityManager{
                                             && dcs.getDigest() != null;
                                     boolean hasPrincipals = principals != null
                                             && principals.length > 0;
-                                    if (hasDigest || hasPrincipals) grant.append(",");
+                                    if (hasDigest || hasPrincipals) {
+                                        grant.append(",");
+                                    } else {
+                                        String[] permsToAdd = prePolpAudit.remove(codebaseStr);
+                                        if (permsToAdd != null){
+                                            for (int i = 0, l = permsToAdd.length; i < l; i++){
+                                                if (written.add(permsToAdd[i])){
+                                                    toAppend.add(permsToAdd[i]);
+                                                }
+                                            }
+                                        }
+                                    }
                                     grant.append("\n");
                                 }
                                 // Emit digest clause for DigestCodeSource.
@@ -537,7 +569,8 @@ public class SecurityPolicyWriter extends CombinerSecurityManager{
                                 grant.append("grant\n");
                             }
                             grant.append("{\n");
-
+                            // Add any
+                            for (String permAdd : toAppend) grant.append(permAdd);
                             Iterator<Permission> permIt = permsToPrint.iterator();
                             while (permIt.hasNext()) {
                                 Permission p = permIt.next();
@@ -594,6 +627,20 @@ public class SecurityPolicyWriter extends CombinerSecurityManager{
                             pw.write("// grant not recorded: " + oneLine(String.valueOf(entry.getKey())) + " (" + oneLine(ex.toString()) + ")\n\n");
                             getLogger().log(Level.ERROR, "Unable to write grant to policy file", ex);
                         }
+                    }
+                    for (Entry<String, String[]> entry : prePolpAudit.entrySet()){
+                        grant.setLength(0);
+                        grant.append("grant ");
+                        grant.append("codebase \"");
+                        grant.append(entry.getKey());
+                        grant.append("\"");
+                        grant.append(" {\n");
+                        String [] permsLines = entry.getValue();
+                        for (String permLine : permsLines){
+                            grant.append(permLine);
+                        }
+                        grant.append("};\n\n");
+                        pw.write(grant.toString());
                     }
                     getLogger().log(Level.INFO, "Finished writing additional permissions, if any, to policy file.");
                 } catch (IOException ex) {
