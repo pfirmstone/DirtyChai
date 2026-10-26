@@ -28,7 +28,8 @@
  *          alias is not in the keystore.  Unsigned code, code signed by
  *          someone else, and a null CodeSource must not be implied, without
  *          throwing; a grant with no signers must still imply unsigned code;
- *          a digest grant must ignore the location but not the signers.
+ *          a digest grant must ignore the location but not the signers,
+ *          and must not imply a digest that was supplied rather than computed.
  *          Defends the principle that a signedBy constraint is part of the
  *          identity the grant is made to: dropping it widens the grant to
  *          anyone who can present the location or the content.
@@ -51,7 +52,6 @@ import java.security.Principal;
 import java.security.ProtectionDomain;
 import java.security.cert.Certificate;
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.PropertyPermission;
 
@@ -78,15 +78,20 @@ import org.apache.river.api.security.PermissionGrantBuilder;
  * passed. After rebuilding with URIGrant calling impliesSigners and
  * returning false from implies(ClassLoader) when it has certificates:
  * passed.
+ *
+ * <p>Updated after DigestGrant stopped implying a DigestCodeSource whose
+ * digest was supplied rather than computed (SECURITY_MODEL.md 8.1, item 2).
+ * The digest cases then failed because their fixtures supplied the digest,
+ * not because the signer rule had changed.  The fixtures now compute the
+ * digest from real files, and a supplied digest is checked as a case of its
+ * own.  OBSERVED, mutating a copy of DigestGrant loaded with --patch-module
+ * over the built tierAI JDK: removing the unverified check fails the "digest
+ * supplied, not computed" case; making the signer check always true fails
+ * the unsigned and bob-signed digest cases.  The unmutated test passed.
  */
 public class GrantSignerTest {
 
     static final String HERE = "file:/ai-test/signer/lib.jar";
-    static final String ELSEWHERE = "file:/ai-test/moved/lib.jar";
-    static final byte[] DIGEST = HexFormat.of().parseHex(
-            "e9014d28d14a23318909c0957b3be984f9ae496b80af1ae3a973436dcbde772b");
-    static final byte[] OTHER_DIGEST = HexFormat.of().parseHex(
-            "0000000000000000000000000000000000000000000000000000000000000001");
     static final Permission PERM = new PropertyPermission("ai.test.signer", "read");
 
     static final List<String> failures = new ArrayList<>();
@@ -155,15 +160,25 @@ public class GrantSignerTest {
                 .context(PermissionGrantBuilder.URI).build();
         expect("codeBase only", uriUnsigned, unsigned, true);
 
-        // digest + signedBy: DigestGrant
-        DigestCodeSource dAlice = new DigestCodeSource(HERE, alice, "SHA-256", DIGEST.clone());
-        DigestCodeSource dUnsigned = new DigestCodeSource(HERE, (Certificate[]) null, "SHA-256", DIGEST.clone());
-        DigestCodeSource dBob = new DigestCodeSource(HERE, bob, "SHA-256", DIGEST.clone());
-        DigestCodeSource dAliceMoved = new DigestCodeSource(ELSEWHERE, alice, "SHA-256", DIGEST.clone());
-        DigestCodeSource dAliceOther = new DigestCodeSource(HERE, alice, "SHA-256", OTHER_DIGEST.clone());
+        // digest + signedBy: DigestGrant.  A digest grant is made to content, so
+        // these code sources have a digest computed from real files: a digest
+        // that was only supplied is never implied (SECURITY_MODEL.md 8.1), which
+        // the last case of this group checks separately.
+        File dir = Files.createTempDirectory(new File(".").toPath(), "digest-signer").toFile();
+        File jarOne = jarFile(dir, "lib.jar", "content one");
+        File jarMoved = jarFile(dir, "moved-lib.jar", "content one");
+        File jarOther = jarFile(dir, "other-lib.jar", "content two");
+        DigestCodeSource dAlice = computed(jarOne, alice);
+        DigestCodeSource dUnsigned = computed(jarOne, null);
+        DigestCodeSource dBob = computed(jarOne, bob);
+        DigestCodeSource dAliceMoved = computed(jarMoved, alice);
+        DigestCodeSource dAliceOther = computed(jarOther, alice);
+        DigestCodeSource dAliceSupplied = new DigestCodeSource(
+                jarOne.toURI().toString(), alice, "SHA-256", dAlice.getDigest());
+        String locationOne = jarOne.toURI().toString();
         PermissionGrant digest = PermissionGrantBuilder.newBuilder()
-                .uri(HERE).certificates(alice, new String[] {"alice"})
-                .digest("SHA-256", DIGEST.clone())
+                .uri(locationOne).certificates(alice, new String[] {"alice"})
+                .digest("SHA-256", dAlice.getDigest())
                 .permissions(new Permission[] {PERM})
                 .context(PermissionGrantBuilder.DIGEST).build();
         expect("digest + signedBy alice", digest, dAlice, true);
@@ -173,13 +188,27 @@ public class GrantSignerTest {
         expect("digest + signedBy alice (different content)", digest, dAliceOther, false);
         expect("digest + signedBy alice (plain CodeSource)", digest, byAlice, false);
         expect("digest + signedBy alice", digest, null, false);
+        expect("digest + signedBy alice (digest supplied, not computed)",
+                digest, dAliceSupplied, false);
 
         // digest only: still implies unsigned code with that content
         PermissionGrant digestUnsigned = PermissionGrantBuilder.newBuilder()
-                .uri(HERE).digest("SHA-256", DIGEST.clone())
+                .uri(locationOne).digest("SHA-256", dAlice.getDigest())
                 .permissions(new Permission[] {PERM})
                 .context(PermissionGrantBuilder.DIGEST).build();
         expect("digest only", digestUnsigned, dUnsigned, true);
+    }
+
+    /** Writes a file with the given content in dir. */
+    static File jarFile(File dir, String name, String content) throws Exception {
+        File f = new File(dir, name);
+        Files.write(f.toPath(), content.getBytes(StandardCharsets.UTF_8));
+        return f;
+    }
+
+    /** A DigestCodeSource whose digest is computed from the file, so it is verified. */
+    static DigestCodeSource computed(File f, Certificate[] certs) throws Exception {
+        return new DigestCodeSource(new CodeSource(f.toURI().toURL(), certs), "SHA-256");
     }
 
     static void expect(String grant, PermissionGrant g, CodeSource cs, boolean implied) {
