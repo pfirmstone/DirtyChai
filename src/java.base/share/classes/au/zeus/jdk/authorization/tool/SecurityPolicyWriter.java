@@ -33,7 +33,6 @@ import java.io.Writer;
 import java.io.OutputStreamWriter;
 import java.net.MalformedURLException;
 import java.net.SocketPermission;
-import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLPermission;
@@ -473,7 +472,6 @@ public class SecurityPolicyWriter extends CombinerSecurityManager{
                                 }
                             }
                             if (cs != null || (principals != null && principals.length > 0)){
-                                URL codebase = cs != null ? cs.getLocation() : null;
                                 grant.append("grant ");
                                 if (keyStore != null){
                                     Certificate [] signers = cs != null ? cs.getCertificates() : null;
@@ -493,7 +491,8 @@ public class SecurityPolicyWriter extends CombinerSecurityManager{
                                         }
                                     }
                                 }
-                                if (codebase != null){
+                                Object cb = cs != null ? cs.getUriLocation() : null;
+                                if (cb instanceof Uri codebase){
                                     grant.append("codebase \"");
                                     String codebaseStr = replaceValuesWithProperties(codebase.toString());
                                     grant.append(codebaseStr);

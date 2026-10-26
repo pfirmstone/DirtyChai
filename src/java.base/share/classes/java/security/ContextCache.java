@@ -39,6 +39,7 @@ import java.util.concurrent.ThreadLocalRandom;
 class ContextCache {
     private static final int MIN_SLOTS = 64;
     private static final int MAX_SLOTS = 1 << 20;   // about 4 MB of references; anything larger is a mistake
+    static final int SLOTS;
     
     private ContextCache(){};
 
@@ -56,6 +57,7 @@ class ContextCache {
         CONTEXTS.set(0, null);
         CONTEXTS.setRelease(0, null);
         CONTEXTS.compareAndSet(0, null, null);
+        SLOTS = slots;
     }
 
     static int slots(int requested) {

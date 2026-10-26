@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.Hashtable;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InvalidObjectException;
 import java.security.cert.*;
 import java.util.Objects;
 
@@ -107,18 +108,7 @@ public class CodeSource implements java.io.Serializable {
      * of the array are copied to protect against subsequent modification.
      */
     public CodeSource(URL url, java.security.cert.Certificate[] certs) {
-        this.location = url;
-        if (url != null) {
-            this.locationNoFragString = URLUtil.urlNoFragString(url);
-            try{
-                this.locationUri = Uri.urlToUri(url);
-            } catch ( URISyntaxException e) {} // should not happen, since the URL was already created
-        }
-
-        // Copy the supplied certs
-        if (certs != null) {
-            this.certs = certs.clone();
-        }
+        this(url, uri(url), certs);
     }
 
     /**
@@ -132,17 +122,28 @@ public class CodeSource implements java.io.Serializable {
      * @since 1.5
      */
     public CodeSource(URL url, CodeSigner[] signers) {
+        this(url, uri(url), signers);
+    }
+    
+    CodeSource(URL url, Uri uri, java.security.cert.Certificate[] certs){
         this.location = url;
-        if (url != null) {
-            this.locationNoFragString = URLUtil.urlNoFragString(url);
-            try{
-                this.locationUri = Uri.urlToUri(url);
-            } catch ( URISyntaxException e) {} // should not happen, since the URL was already created
-        }
-
-        // Copy the supplied signers
-        if (signers != null) {
-            this.signers = signers.clone();
+        this.locationNoFragString = url != null ? URLUtil.urlNoFragString(url) : null;
+        this.locationUri = uri;
+        this.certs = certs != null ? certs.clone() : null;
+    }
+    
+    CodeSource(URL url, Uri uri, CodeSigner[] signers){
+        this.location = url;
+        this.locationNoFragString = url != null ? URLUtil.urlNoFragString(url) : null;
+        this.locationUri = uri;
+        this.signers = signers != null ? signers.clone() : null;
+    }
+    
+    static Uri uri(URL url){
+        try {
+            return url != null ? Uri.urlToUri(url) : null;
+        } catch (URISyntaxException ex) {
+            throw new IllegalArgumentException("Illegal URL syntax: ", ex);
         }
     }
 
@@ -647,6 +648,11 @@ public class CodeSource implements java.io.Serializable {
 
         if (location != null) {
             locationNoFragString = URLUtil.urlNoFragString(location);
+            try {
+                locationUri = location != null ? Uri.urlToUri(location) : null;
+            } catch (URISyntaxException ex) {
+                throw new InvalidObjectException("Illegal URL syntax: ", ex);
+            }
         }
     }
 

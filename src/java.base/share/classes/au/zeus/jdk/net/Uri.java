@@ -1294,17 +1294,17 @@ public final class Uri implements Comparable<Uri> {
             if (thatFile == null || thisFile == null) return false;
             if (thisFile.endsWith("/-")) { //javadoc:3.6."/-" //$NON-NLS-1$
                 if (!thatFile.startsWith(thisFile.substring(0, thisFile
-                        .length() - 2))) {
+                        .length() - 1))) {
                     return false;
                 }
             } else if (thisFile.endsWith(";-")) { //httpmd
                 if (!thatFile.startsWith(thisFile.substring(0, thisFile
-                        .length() - 2))) {
+                        .length() - 1))) {
                     return false;
                 }
             } else if (thisFile.endsWith("/*")) { //javadoc:3.6."/*" //$NON-NLS-1$
                 if (!thatFile.startsWith(thisFile.substring(0, thisFile
-                        .length() - 2))) {
+                        .length() - 1))) {
                     return false;
                 }
                 // no further separators(s) allowed

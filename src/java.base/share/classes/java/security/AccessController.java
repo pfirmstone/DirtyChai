@@ -27,10 +27,10 @@ package java.security;
 
 import au.zeus.jdk.net.Uri;
 import java.lang.ref.Reference;
+import java.lang.ref.WeakReference;
 import java.net.MalformedURLException;
 import java.net.URISyntaxException;
-import java.net.URL;
-import java.net.URI;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 import javax.security.auth.Subject;
 import javax.security.auth.SubjectDomainCombiner;
 import javax.security.auth.WorkerSubject;
@@ -1049,10 +1049,16 @@ public final class AccessController {
         // EG URL spoofed address might have URI and Principals, but not
         // Certificates, we don't want to grant imposter code permission,
         // all conditions must be satisfied.
-        ProtectionDomain callerDomain = clazz.getProtectionDomain();
-        CodeSource callerCodeSource = callerDomain.getCodeSource();
-        Module module = clazz.getModule();
-        String moduleName = module != null ? module.getName() : null;
+        ProtectionDomain callerDomain = getProtectionDomain(clazz);
+        CodeSource callerCodeSource = null;
+        String moduleName;
+        if (callerDomain != null){
+            callerCodeSource = callerDomain.getCodeSource();
+            Module module = clazz.getModule();
+            moduleName = module != null ? module.getName() : null;
+        } else {
+            moduleName = "java.base";
+        }
         if (moduleName != null){
             StringBuilder sb = new StringBuilder();
             String className = clazz.getName();
@@ -1062,15 +1068,20 @@ public final class AccessController {
             }
             sb.append("jrt:/").append(moduleName).append("/").append(className);
             try {
-                return new CodeSource(Uri.escapeAndCreate(sb.toString()).toURL(), 
+                Uri uri = Uri.parseAndCreate(sb.toString());
+                return new CodeSource(uri.toURL(), uri,
                         callerCodeSource != null?
                         callerCodeSource.getCertificates() : null);
-            } catch (MalformedURLException | URISyntaxException e){
+            } catch (MalformedURLException | URISyntaxException | RuntimeException e){
                 // SECURITY: Return null CodeSource on exception.
                 // A null CodeSource cannot match any policy grants,
                 // preventing privilege escalation if URI validation fails.
                 // This fail-secure approach ensures that malformed URIs
                 // cannot be exploited to bypass policy enforcement.
+                Debug debug = AccessControlContext.getDebug();
+                if (debug != null && Debug.isOn("failure")){
+                    debug.println("Exception occurred while attempting to create codebase url: " + e);
+                }
                 return null;
             }
         }
@@ -1078,54 +1089,93 @@ public final class AccessController {
         // bootstrap workaround for null modules and null ClassLoaders
         if (callerCodeSource != null){
             try {
-                String urlstring = callerCodeSource.getLocationNoFragString();
+                Object loc = callerCodeSource.getUriLocation();
+                String urlstring = loc instanceof Uri uri ? uri.toString() : null;
+                if (urlstring == null) return null;
                 StringBuilder sb = new StringBuilder();
                 sb.append(urlstring);
+                boolean appendSlash = urlstring.lastIndexOf('/') != urlstring.length() - 1;
                 String className = clazz.getName();
                 int index = className.indexOf('$');
                 if (index > 0){
                     className = className.substring(0, index);
                 }
-                sb.append("/").append(className);
-                return new CodeSource(Uri.escapeAndCreate(sb.toString()).toURL(),
+                if (appendSlash) sb.append("/");
+                sb.append(className);
+                return new CodeSource(callerCodeSource.getLocation(), Uri.parseAndCreate(sb.toString()),
                         callerCodeSource.getCertificates());
-            } catch (MalformedURLException | URISyntaxException ex) {
+            } catch (URISyntaxException | RuntimeException ex) {
                 // SECURITY: Return null CodeSource on exception.
                 // A null CodeSource cannot match any policy grants,
                 // preventing privilege escalation if URI validation fails.
                 // This fail-secure approach ensures that malformed URIs
                 // cannot be exploited to bypass policy enforcement.
+                Debug debug = AccessControlContext.getDebug();
+                if (debug != null && Debug.isOn("failure")){
+                    debug.println("Exception occurred while attempting to create codebase url: " + ex);
+                }
                 return null;
             }
         }
         return null;
     }
+    
+    private static class Holder {
+        static final AtomicReferenceArray<WeakReference<DomainIdentity>> IDENTITIES = 
+                new AtomicReferenceArray<>(ContextCache.SLOTS);
+    }
+    
+    private static DomainIdentity lookup(Class<?> caller){
+        ProtectionDomain callerDomain = getProtectionDomain(caller);
+        AtomicReferenceArray<WeakReference<DomainIdentity>> table = Holder.IDENTITIES;
+        int hash = System.identityHashCode(caller);
+        int h = hash ^ (hash >>> 16);
+        int i = h & (table.length() - 1);   
+        int j = i ^ 1;
+        WeakReference<DomainIdentity> wi = table.get(i), wj = table.get(j);
+        DomainIdentity ai = wi != null ? wi.get() : null;
+        if (ai != null && ai.getCaller() == caller) return ai;
+        DomainIdentity aj = wj != null ? wj.get() : null;
+        if (aj != null && aj.getCaller() == caller) return aj;
 
+        
+        DomainIdentity result = new DomainIdentity(getResource(caller),null, null, null, callerDomain, caller);
+        // Empty or cleared i first; otherwise replace j, so i stays sticky.
+        int slot = (ai == null) ? i : j;
+        WeakReference<DomainIdentity> expected = (ai == null) ? wi : wj;
+        if (!table.compareAndSet(slot, expected, new WeakReference<>(result))) {
+            WeakReference<DomainIdentity> w = table.get(slot);   // lost a race: prefer the winner if equal
+            DomainIdentity winner = w != null ? w.get() : null;
+            if (winner != null && winner.getCaller() == caller) return winner;
+        }
+        return result;
+    }
+    
     private static AccessControlContext limited(AccessControlContext context,
                                                 Class<?> caller,
                                                 DomainCombiner combiner,
                                                 PermissionCollection<Permission> perms){
+        if (caller == null) throw new SecurityException("null caller not permitted");
         if (AccessControlContext.hasStarted()){
-            return doUnlimited(new PrivilegedAction<AccessControlContext>(){
-                @Override
-                public AccessControlContext run() {
-                    CodeSource cs = caller != null ? getResource(caller) : null;
-                    ProtectionDomain pd = new DomainIdentity(cs, perms, null, null,
-                                caller != null ? getProtectionDomain(caller) : null);
-                    if (context == null){
-                        return AccessControlContext.create(
-                                new ProtectionDomain[]{pd},
-                                (AccessControlContext) null,
-                                combiner, true);
-                    } else {
-                        if (combiner != null){
-                            return context.intersectionOfPermsDoWithCombiner(combiner, pd);
-                        } else {
-                            return context.intersectionPermissions(pd);
-                        }
-                    }
+            ProtectionDomain pd;
+            if (perms != null){
+                CodeSource cs = getResource(caller);
+                pd = new DomainIdentity(cs, perms, null, null,getProtectionDomain(caller), caller);
+            } else {
+                pd = lookup(caller);
+            }
+            if (context == null){
+                return AccessControlContext.create(
+                        new ProtectionDomain[]{pd},
+                        (AccessControlContext) null,
+                        combiner, true);
+            } else {
+                if (combiner != null){
+                    return context.intersectionOfPermsDoWithCombiner(combiner, pd);
+                } else {
+                    return context.intersectionPermissions(pd);
                 }
-            });
+            }
         }   
         return context;
     }

@@ -118,6 +118,7 @@ public final class DomainIdentity extends ProtectionDomain {
     private final SortedSet<Permission> permissions;
     private final CodeSource uriCS;
     private final ProtectionDomain callerDomain;
+    private final Class<?> caller;
     
     /**
      * Creates a new {@code ProtectionDomain} qualified by the given
@@ -153,7 +154,7 @@ public final class DomainIdentity extends ProtectionDomain {
                           ClassLoader classloader,
                           Principal[] principals) 
     {
-        this(codesource, permissions, classloader, principals, null);
+        this(codesource, permissions, classloader, principals, null, null);
     }
 
     /**
@@ -181,6 +182,7 @@ public final class DomainIdentity extends ProtectionDomain {
      * with this domain. The contents of the array are copied to protect against
      * subsequent modification.
      * @param callerDomain that called an {@link AccessController AccessController#doPrivileged} method.
+     * @param caller that called an {@link AccessController AccessController#doPrivileged} method.
      * @see Policy#refresh
      * @see Policy#getPermissions(ProtectionDomain)
      * @since 27
@@ -189,13 +191,15 @@ public final class DomainIdentity extends ProtectionDomain {
                           PermissionCollection<? extends Permission> permissions,
                           ClassLoader classloader,
                           Principal[] principals,
-                          ProtectionDomain callerDomain){
+                          ProtectionDomain callerDomain,
+                          Class<?> caller){
         super(codesource, permissions, classloader, principals);
         this.principals = principals != null ? new HashSet<>(Arrays.asList(principals)): null; 
         this.permissions = permissions != null ? permissionsToSet(permissions) : null;
         this.uriCS = codesource instanceof DigestCodeSource ? codesource : 
                 codesource!= null ? new UriCodeSource(codesource) : null;
         this.callerDomain = callerDomain;
+        this.caller = caller;
         int hash = 7;
         hash = 7 * hash + (hasAllPerm() ? 1231 : 1237);
         hash = 7 * hash + getClass().hashCode();
@@ -205,6 +209,7 @@ public final class DomainIdentity extends ProtectionDomain {
         hash = 7 * hash + Objects.hashCode(classloader);
         hash = 7 * hash + Objects.hashCode(this.principals);
         hash = 7 * hash + Objects.hashCode(callerDomain);
+        hash = 7 * hash + Objects.hashCode(caller);
         hashcode = hash;
     }
     
@@ -227,6 +232,7 @@ public final class DomainIdentity extends ProtectionDomain {
         super(codesource, permissions);
         this.principals = null;
         this.callerDomain = null;
+        this.caller = null;
         this.permissions = permissions != null ? permissionsToSet(permissions) : null;
         this.uriCS = codesource instanceof DigestCodeSource ? codesource : 
                 codesource!= null ? new UriCodeSource(codesource) : null;
@@ -260,6 +266,7 @@ public final class DomainIdentity extends ProtectionDomain {
             }
             if (!Objects.equals(this.principals, other.principals)) return false;
             if (!Objects.equals(this.callerDomain, other.callerDomain)) return false;
+            if (!Objects.equals(this.caller, other.caller)) return false;
             if (hasAllPerm() && other.hasAllPerm()) return true;
             return Objects.equals(permissions, other.permissions);
         }
@@ -272,6 +279,10 @@ public final class DomainIdentity extends ProtectionDomain {
      */
     public ProtectionDomain getCallerDomain(){
         return callerDomain;
+    }
+    
+    Class<?> getCaller(){
+        return caller;
     }
     
     /**
@@ -291,22 +302,22 @@ public final class DomainIdentity extends ProtectionDomain {
         private final int hashCode;
         
         UriCodeSource(CodeSource cs){
-            this(cs.getLocation(), cs.getCertificates());
+            this(cs.getLocation(), cs.getUriLocation(), cs.getCertificates());
         }
         
-        private UriCodeSource(URL url, java.security.cert.Certificate [] certs){
-            super(url, certs);
-            Uri uRi = null;
-            if (url != null){
-                try {
-                    uRi = Uri.urlToUri(url);
-                } catch (URISyntaxException ex) { }//Ignore
-            }
-            this.uri = uRi;
+        private UriCodeSource(URL url, Object uri, java.security.cert.Certificate [] certs){
+            super(url, check(uri), certs);
+            this.uri = (Uri) uri;
             int hash = 7;
             hash = 23 * hash + (this.uri != null ? this.uri.hashCode() : 0);
             hash = 23 * hash + (certs != null ? Arrays.hashCode(certs) : 0);
             hashCode = hash;
+        }
+        
+        static Uri check(Object uri){
+            if (uri instanceof Uri u) return u;
+            if (uri == null) return null;
+            throw new IllegalArgumentException("uri has incorrect type");
         }
 
         @Override
