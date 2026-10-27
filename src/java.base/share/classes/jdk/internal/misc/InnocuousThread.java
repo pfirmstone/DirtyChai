@@ -31,6 +31,7 @@ import java.security.Permission;
 import java.security.ProtectionDomain;
 import java.security.PrivilegedAction;
 import java.util.concurrent.atomic.AtomicInteger;
+import sun.security.util.SecurityConstants;
 
 /**
  * A thread that has no permissions, is not a member of any user-defined
@@ -72,9 +73,12 @@ public final class InnocuousThread extends Thread {
      * set to the given priority.
      */
     public static Thread newThread(String name, Runnable target, int priority) {
-        if (System.getSecurityManager() == null) {
+        SecurityManager sm = System.getSecurityManager();
+        if (sm == null) {
             return createThread(name, target, 0L,
                     ClassLoader.getSystemClassLoader(), priority);
+        } else {
+            sm.checkPermission(SecurityConstants.CREATE_INNOCUOUS_THREAD);
         }
         return AccessController.doPrivileged(
                 new PrivilegedAction<Thread>() {
@@ -106,8 +110,11 @@ public final class InnocuousThread extends Thread {
      * Thread priority is set to the given priority.
      */
     public static Thread newSystemThread(String name, Runnable target, int priority) {
-        if (System.getSecurityManager() == null) {
+        SecurityManager sm = System.getSecurityManager();
+        if (sm == null) {
             return createThread(name, target, 0L, null, priority);
+        } else {
+            sm.checkPermission(SecurityConstants.CREATE_INNOCUOUS_THREAD);
         }
         return AccessController.doPrivileged(
                 new PrivilegedAction<Thread>() {
@@ -125,8 +132,11 @@ public final class InnocuousThread extends Thread {
      */
     public static Thread newSystemThread(String name, Runnable target,
                                          long stackSize, int priority) {
-        if (System.getSecurityManager() == null) {
+        SecurityManager sm = System.getSecurityManager();
+        if (sm == null) {
             return createThread(name, target, stackSize, null, priority);
+        } else {
+            sm.checkPermission(SecurityConstants.CREATE_INNOCUOUS_THREAD);
         }
         return AccessController.doPrivileged(
                 new PrivilegedAction<Thread>() {

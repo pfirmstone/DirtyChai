@@ -260,7 +260,7 @@ JVM_LEAF(jlong, JVM_CurrentTimeMillis(JNIEnv *env, jclass ignored))
 JVM_END
 
 JVM_LEAF(jlong, JVM_NanoTime(JNIEnv *env, jclass ignored))
-  return os::javaTimeNanos();
+  return os::javaTimeNanosCoarse();
 JVM_END
 
 // The function below is actually exposed by jdk.internal.misc.VM and not
@@ -274,7 +274,7 @@ JVM_LEAF(jlong, JVM_GetNanoTimeAdjustment(JNIEnv *env, jclass ignored, jlong off
   jlong seconds;
   jlong nanos;
 
-  os::javaTimeSystemUTC(seconds, nanos);
+  os::javaTimeSystemUTCCoarse(seconds, nanos);
 
   // We're going to verify that the result can fit in a long.
   // For that we need the difference in seconds between 'seconds'

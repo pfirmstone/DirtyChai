@@ -90,6 +90,7 @@
 
 OSThread*         os::_starting_thread    = nullptr;
 volatile unsigned int os::_rand_seed      = 1234567;
+jlong              os::_java_time_granularity_ns      = 1;
 int               os::_processor_count    = 0;
 int               os::_initial_active_processor_count = 0;
 os::PageSizes     os::_page_sizes;
@@ -123,6 +124,26 @@ int os::vsnprintf(char* buf, size_t len, const char* fmt, va_list args) {
   }
   assert(result >= 0, "os::vsnprintf error: %s", strerror(errno));
   return result;
+}
+
+// Set nano time granularity
+void os::set_java_time_granularity(jlong granularity_ns) {
+  assert(granularity_ns > 0, "Valid nano time granularity must be greater than zero");
+  assert(is_power_of_2(granularity_ns), "Valid nano time granularity must be a power of two");
+  assert(_java_time_granularity_ns == 1, "nano time granularity can only be set once");
+  _java_time_granularity_ns = granularity_ns;
+}
+
+// Coarse nano time to defend against timing attacks.
+jlong os::javaTimeNanosCoarse() {
+  return javaTimeNanos() & ~(_java_time_granularity_ns - 1);
+}
+
+// Coarse system time to defend against timing attacks.
+void os::javaTimeSystemUTCCoarse(jlong &seconds, jlong &nanos) {
+  javaTimeSystemUTC(seconds, nanos);
+  nanos = nanos & ~(_java_time_granularity_ns - 1);
+  assert(nanos < NANOSECS_PER_SEC, "nanos must be less than one second");
 }
 
 // Fill in buffer with current local time as an ISO-8601 string.

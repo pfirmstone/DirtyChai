@@ -203,6 +203,7 @@ class os: AllStatic {
  private:
   static OSThread*          _starting_thread;
   static PageSizes          _page_sizes;
+  static jlong              _java_time_granularity_ns;
 
   // The default value for os::vm_min_address() unless the platform knows better. This value
   // is chosen to give us reasonable protection against null pointer dereferences while being
@@ -275,8 +276,11 @@ class os: AllStatic {
 
   static jlong  javaTimeMillis();
   static jlong  javaTimeNanos();
+  static jlong  javaTimeNanosCoarse();
   static void   javaTimeNanos_info(jvmtiTimerInfo *info_ptr);
   static void   javaTimeSystemUTC(jlong &seconds, jlong &nanos);
+  static void   javaTimeSystemUTCCoarse(jlong &seconds, jlong &nanos);
+  static void   set_java_time_granularity(jlong granularity_ns);
   static void   run_periodic_checks(outputStream* st);
 
   // Returns the elapsed time in seconds since the vm started.

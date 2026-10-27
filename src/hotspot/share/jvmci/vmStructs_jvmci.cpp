@@ -883,7 +883,7 @@
   declare_function(os::dll_load)                                          \
   declare_function(os::dll_lookup)                                        \
   declare_function(os::javaTimeMillis)                                    \
-  declare_function(os::javaTimeNanos)                                     \
+  declare_function_with_value(os::javaTimeNanos, os::javaTimeNanosCoarse) \
                                                                           \
   ZGC_ONLY(DECLARE_FUNCTION_FROM_ADDR(declare_function_with_value, ZBarrierSetRuntime::load_barrier_on_oop_field_preloaded))                      \
   ZGC_ONLY(DECLARE_FUNCTION_FROM_ADDR(declare_function_with_value, ZBarrierSetRuntime::load_barrier_on_weak_oop_field_preloaded))                 \

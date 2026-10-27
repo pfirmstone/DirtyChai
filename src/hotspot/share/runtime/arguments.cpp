@@ -3003,6 +3003,28 @@ jint Arguments::finalize_vm_init_args() {
   return JNI_OK;
 }
 
+jint Arguments::parse_nano_time_granularity() {
+  const char* au_zeus_jdk_nano_time_granularity = get_property("au.zeus.jdk.nanoTime.granularity");
+  if (au_zeus_jdk_nano_time_granularity == nullptr) return JNI_OK;
+  jlong ntg;
+  const char* error = nullptr;
+  if (!parse_integer(au_zeus_jdk_nano_time_granularity, &ntg)) {
+    error = "Unable to parse system property: au.zeus.jdk.nanoTime.granularity\n";
+  } else {
+    if (!is_power_of_2(ntg)) {
+      error = "System property au.zeus.jdk.nanoTime.granularity must be a power of two\n";
+    } else if (ntg >= NANOSECS_PER_SEC) {
+      error = "System property au.zeus.jdk.nanoTime.granularity must be less than 1 second\n";
+    }
+  }
+  if (error == nullptr) {
+    os::set_java_time_granularity(ntg);
+    return JNI_OK;
+  }
+  jio_fprintf(defaultStream::error_stream(), "%s", error);
+  return JNI_EINVAL;
+}
+
 // Helper class for controlling the lifetime of JavaVMInitArgs
 // objects.  The contents of the JavaVMInitArgs are guaranteed to be
 // deleted on the destruction of the ScopedVMInitArgs object.
@@ -3781,6 +3803,11 @@ jint Arguments::parse(const JavaVMInitArgs* initial_cmd_args) {
   if (log_is_enabled(Info, arguments)) {
     LogStream st(Log(arguments)::info());
     Arguments::print_on(&st);
+  }
+
+  jint nano_result = parse_nano_time_granularity();
+  if (nano_result != JNI_OK) {
+    return nano_result;
   }
 
   return JNI_OK;

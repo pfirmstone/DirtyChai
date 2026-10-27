@@ -104,6 +104,14 @@ import au.zeus.jdk.authorization.sm.CombinerSecurityManager;
 import au.zeus.jdk.authorization.sm.PolicyOnlySecurityManager;
 import java.security.PrivilegedExceptionAction;
 import java.security.PrivilegedActionException;
+import jdk.internal.loader.ClassLoaders;
+import jdk.internal.logger.BootstrapLogger;
+import jdk.internal.ref.CleanerFactory;
+import jdk.internal.ref.CleanerImpl;
+import sun.net.www.http.KeepAliveCache;
+import sun.net.www.http.KeepAliveStream;
+import sun.nio.ch.Poller;
+import sun.nio.ch.ThreadPool;
 
 /**
  * The {@code System} class contains several useful class fields
@@ -2463,7 +2471,23 @@ public final class System {
         // bootstrap circularity issues that could be caused by a custom
         // SecurityManager
         Unsafe.getUnsafe().ensureClassInitialized(StringConcatFactory.class);
-
+        // Initialize singletons to allow full stack permission checks to
+        // prevent malicious timing attacks.
+        Unsafe.getUnsafe().ensureClassInitialized(CleanerImpl.class);
+        Unsafe.getUnsafe().ensureClassInitialized(CleanerFactory.class);
+        Unsafe.getUnsafe().ensureClassInitialized(BootstrapLogger.class);
+        Unsafe.getUnsafe().ensureClassInitialized(VirtualThread.class);
+        Unsafe.getUnsafe().ensureClassInitialized(ProcessHandleImpl.class);
+        Unsafe.getUnsafe().ensureClassInitialized(KeepAliveStream.class);
+        Unsafe.getUnsafe().ensureClassInitialized(KeepAliveCache.class);
+        Unsafe.getUnsafe().ensureClassInitialized(Poller.class);
+        Unsafe.getUnsafe().ensureClassInitialized(ThreadPool.class);
+        try {
+            Class.forName("java.nio.BufferCleaner", true, null);
+            Class.forName("sun.nio.fs.Cancellable", true, null);
+        } catch (ClassNotFoundException ex) {
+            System.getLogger(System.class.getName()).log(Logger.Level.ERROR, (String) null, ex);
+        }
         // Emit a warning if java.io.tmpdir is set via the command line
         // to a directory that doesn't exist
         if (SystemProps.isBadIoTmpdir()) {
