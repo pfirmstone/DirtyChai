@@ -1975,7 +1975,7 @@ public final class Uri implements Comparable<Uri> {
         if (userinfo != null){
             sb.append(userinfo).append('@').append(hst);
             hst = sb.toString();
-            sb.delete(0, sb.length()-1);
+            sb.setLength(0);
         }
         // now lets create the file section of the URL.
         sb.append(path);
