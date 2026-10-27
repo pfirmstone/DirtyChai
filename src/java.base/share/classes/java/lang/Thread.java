@@ -770,7 +770,7 @@ public class Thread implements Runnable {
     
     private static boolean canCreatePlatformThread() throws SecurityException {
         SecurityManager sm = System.getSecurityManager();
-        if (sm != null) sm.checkPermission(new RuntimePermission("createPlatformThread"));
+        if (sm != null) sm.checkPermission(SecurityConstants.CREATE_PLATFORM_THREAD);
         return true;
     }
     

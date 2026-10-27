@@ -58,6 +58,7 @@ import jdk.internal.access.SharedSecrets;
 import jdk.internal.misc.Unsafe;
 import jdk.internal.vm.SharedThreadContainer;
 import static java.util.concurrent.DelayScheduler.ScheduledForkJoinTask;
+import sun.security.util.SecurityConstants;
 
 /**
  * An {@link ExecutorService} for running {@link ForkJoinTask}s.
@@ -1194,6 +1195,10 @@ public class ForkJoinPool extends AbstractExecutorService
         
         @Override
         public final ForkJoinWorkerThread newThread(ForkJoinPool pool) {
+            SecurityManager sm = System.getSecurityManager();
+            if (sm != null){
+                sm.checkPermission(SecurityConstants.CREATE_INNOCUOUS_THREAD);
+            }
             return AccessController.doPrivileged(
                 (PrivilegedAction<ForkJoinWorkerThread>)()-> 
                     new ForkJoinWorkerThread(null, pool, true, true),
@@ -1232,6 +1237,10 @@ public class ForkJoinPool extends AbstractExecutorService
 
         @SuppressWarnings("removal")
         static ForkJoinWorkerThread newRegularWithACC(ForkJoinPool pool) {
+            SecurityManager sm = System.getSecurityManager();
+            if (sm != null){
+                sm.checkPermission(SecurityConstants.CREATE_INNOCUOUS_THREAD);
+            }
             AccessControlContext acc = regularACC;
             if (acc == null) {
                 Permissions ps = new Permissions();
@@ -1251,6 +1260,10 @@ public class ForkJoinPool extends AbstractExecutorService
 
         @SuppressWarnings("removal")
         static ForkJoinWorkerThread newCommonWithACC(ForkJoinPool pool) {
+            SecurityManager sm = System.getSecurityManager();
+            if (sm != null){
+                sm.checkPermission(SecurityConstants.CREATE_INNOCUOUS_THREAD);
+            }
             AccessControlContext acc = commonACC;
             if (acc == null) {
                 Permissions ps = new Permissions();

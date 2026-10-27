@@ -139,6 +139,14 @@ public final class SecurityConstants {
     // java.lang.module.ModuleLayer Module ModuelReference Configuration
     public static final RuntimePermission READ_MODULE_TOPOLOGY =
             new RuntimePermission("readModuleTopology");
+    
+    // InnocousThread
+    public static final RuntimePermission CREATE_INNOCUOUS_THREAD =
+            new RuntimePermission("createInnocuousThread");
+    
+    // java.lang.Thread
+    public static final RuntimePermission CREATE_PLATFORM_THREAD =
+            new RuntimePermission("createPlatformThread");
 
     // java.security.AccessControlContext
     public static final SecurityPermission CREATE_ACC_PERMISSION =

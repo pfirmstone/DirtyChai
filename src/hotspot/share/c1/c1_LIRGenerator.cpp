@@ -2829,7 +2829,7 @@ void LIRGenerator::do_Intrinsic(Intrinsic* x) {
     break;
 
   case vmIntrinsics::_nanoTime:
-    do_RuntimeCall(CAST_FROM_FN_PTR(address, os::javaTimeNanos), x);
+    do_RuntimeCall(CAST_FROM_FN_PTR(address, os::javaTimeNanosCoarse), x);
     break;
 
   case vmIntrinsics::_Object_init:    do_RegisterFinalizer(x); break;

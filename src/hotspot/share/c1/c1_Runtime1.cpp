@@ -324,6 +324,7 @@ const char* Runtime1::name_for_address(address entry) {
 
   FUNCTION_CASE(entry, os::javaTimeMillis);
   FUNCTION_CASE(entry, os::javaTimeNanos);
+  FUNCTION_CASE(entry, os::javaTimeNanosCoarse);
   FUNCTION_CASE(entry, SharedRuntime::OSR_migration_end);
   FUNCTION_CASE(entry, SharedRuntime::d2f);
   FUNCTION_CASE(entry, SharedRuntime::d2i);

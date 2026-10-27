@@ -224,6 +224,7 @@ public class ThreadImpl implements ThreadMXBean {
 
     @Override
     public long getCurrentThreadCpuTime() {
+        Util.checkMonitorAccess();
         if (verifyCurrentThreadCpuTime() && !Thread.currentThread().isVirtual()) {
             return getThreadTotalCpuTime0(0);
         }
@@ -232,6 +233,7 @@ public class ThreadImpl implements ThreadMXBean {
 
     @Override
     public long getThreadCpuTime(long id) {
+        Util.checkMonitorAccess();
         long[] ids = new long[1];
         ids[0] = id;
         final long[] times = getThreadCpuTime(ids);
@@ -263,6 +265,7 @@ public class ThreadImpl implements ThreadMXBean {
     }
 
     protected long[] getThreadCpuTime(long[] ids) {
+        Util.checkMonitorAccess();
         boolean verified = verifyThreadCpuTime(ids);
 
         int length = ids.length;
@@ -287,6 +290,7 @@ public class ThreadImpl implements ThreadMXBean {
 
     @Override
     public long getCurrentThreadUserTime() {
+        Util.checkMonitorAccess();
         if (verifyCurrentThreadCpuTime() && !Thread.currentThread().isVirtual()) {
             return getThreadUserCpuTime0(0);
         }
@@ -295,6 +299,7 @@ public class ThreadImpl implements ThreadMXBean {
 
     @Override
     public long getThreadUserTime(long id) {
+        Util.checkMonitorAccess();
         long[] ids = new long[1];
         ids[0] = id;
         final long[] times = getThreadUserTime(ids);
@@ -302,6 +307,7 @@ public class ThreadImpl implements ThreadMXBean {
     }
 
     protected long[] getThreadUserTime(long[] ids) {
+        Util.checkMonitorAccess();
         boolean verified = verifyThreadCpuTime(ids);
 
         int length = ids.length;

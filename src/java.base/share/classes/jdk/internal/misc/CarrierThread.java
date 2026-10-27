@@ -64,7 +64,8 @@ public class CarrierThread extends ForkJoinWorkerThread {
     @SuppressWarnings("this-escape")
     public CarrierThread(ForkJoinPool pool) {
         super(CARRIER_THREADGROUP, pool, true);
-        U.putReference(this, CONTEXTCLASSLOADER, ClassLoader.getSystemClassLoader());
+        // Early initialization during bootstrap: System ClassLoader hasn't booted yet, use the bootstrap.
+        U.putReference(this, CONTEXTCLASSLOADER, null);
         U.putReference(this, INHERITABLETHREADLOCALS, null);
         U.putReferenceRelease(this, INHERITEDACCESSCONTROLCONTEXT, INNOCUOUS_ACC);
     }
