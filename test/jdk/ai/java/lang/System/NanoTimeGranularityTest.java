@@ -66,14 +66,38 @@ import java.util.List;
  * <li>M2: control runs with the property unset, -Xint and -Xcomp
  *     -XX:-TieredCompilation.  OBSERVED: both PASS, so the platform clock
  *     is fine-grained and the coarse runs measure the feature.</li>
- * <li>Not run: the C1 coarse run and the C2 coarse run against the
- *     unimplemented JDK (jtreg stops at the first failing @run), and every
- *     coarse run against a correct implementation.  Nothing is claimed that
- *     the coarse runs PASS; that needs the implementation.</li>
- * <li>Not run: a mutation that coarsens in one tier only (for example
- *     JVM_NanoTime but not the C2 call site).  Once the feature exists, that
- *     is the mutation to apply to each of the three call sites in turn.</li>
+ * <li>Against the implemented feature (unmutated HotSpot, private copy of the
+ *     built JDK, runs executed directly with java rather than through
+ *     jtreg): all five @run lines PASS.</li>
  * </ol>
+ *
+ * Call-site mutations.  Each reverted ONE call site to the uncoarsened clock,
+ * rebuilt libjvm (make hotspot), put it in a private copy of the JDK image,
+ * and restored the source with git checkout.
+ * <ol>
+ * <li>M3: JVM_NanoTime (interpreter and native entry) returns
+ *     os::javaTimeNanos().  OBSERVED: the -Xint coarse run FAILS and the C2
+ *     coarse run FAILS; the C1 coarse run PASSES.  The C2 run fails because
+ *     its first compile of sample() is discarded by an uncommon trap and the
+ *     loop finishes in the interpreter before the OSR compile, so part of
+ *     that run reads the clock through JVM_NanoTime.  The C1 run is compiled
+ *     once and never uses JVM_NanoTime.</li>
+ * <li>M4: the C2 intrinsic (library_call.cpp) uses os::javaTimeNanos.
+ *     OBSERVED: only the C2 coarse run FAILS.</li>
+ * <li>M5: the C1 intrinsic (c1_LIRGenerator.cpp) uses os::javaTimeNanos.
+ *     OBSERVED: only the C1 coarse run FAILS.  An earlier version of this
+ *     test did not catch this mutation: -Xcomp compiles sample() at its first
+ *     call, before this class had executed System.nanoTime(), so the
+ *     constant-pool entry was unresolved, the compiler reported the callee as
+ *     "(not loaded) failed to inline", and C1 emitted an ordinary call to the
+ *     native method.  main() now runs System.nanoTime() and
+ *     System.currentTimeMillis() once before sample() is first called;
+ *     -XX:+PrintInlining then shows System::nanoTime inlined as an intrinsic
+ *     in the C1 compile of sample().</li>
+ * </ol>
+ *
+ * Not covered: the function address exported to JVMCI compilers
+ * (vmStructs_jvmci.cpp) needs a JVMCI compiler to exercise and was not tested.
  */
 public class NanoTimeGranularityTest {
 
@@ -128,7 +152,19 @@ public class NanoTimeGranularityTest {
         }
     }
 
+    /** Keeps the warm-up readings live so they cannot be discarded. */
+    static volatile long warm;
+
     public static void main(String[] args) {
+        // Under -Xcomp sample() is compiled the first time it is called.  If
+        // this class has not yet executed System.nanoTime() and
+        // System.currentTimeMillis(), those constant-pool entries are still
+        // unresolved, the compiler sees the callees as "not loaded", and C1
+        // emits an ordinary call to the native method instead of the
+        // intrinsic, so the C1 run would never reach the C1 call site.  Run
+        // each call once here so the compile of sample() sees them resolved.
+        warm = System.nanoTime() + System.currentTimeMillis();
+
         long g = Long.parseLong(args[0]);
         List<String> failures = new ArrayList<>();
 

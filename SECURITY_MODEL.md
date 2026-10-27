@@ -590,8 +590,15 @@ When a SecurityManager is installed, Dirty Chai enforces explicit runtime permis
 
 - **Platform threads:** `RuntimePermission("createPlatformThread")`
 - **Virtual threads:** `RuntimePermission("createVirtualThread")`
+- **JDK-internal ("innocuous") threads:** `RuntimePermission("createInnocuousThread")`
 
-These checks are applied in builder paths (`ThreadBuilders`) and in public platform-thread constructor paths (`Thread`), so both modern and traditional creation APIs are guarded.
+The first two checks are applied in builder paths (`ThreadBuilders`) and in public platform-thread constructor paths (`Thread`), so both modern and traditional creation APIs are guarded.
+
+`createInnocuousThread` covers a different path: the JDK creating a thread *for* the caller under `doPrivileged`, for example a `Cleaner` thread (`Cleaner.create()`) or a `ForkJoinPool` worker started by `submit()`, `CompletableFuture.runAsync()` or `parallelStream()`. `doPrivileged` truncates the stack, so the `createPlatformThread` check does not see the original caller, and the new thread's stored context is not the caller's (for `InnocuousThread` it is a fixed, privileged context set by `InnocuousThread` itself). The check is therefore placed immediately before the `doPrivileged` at each such site, not inside a shared helper and not by removing the `doPrivileged`. It is implemented at the three `InnocuousThread` factory sites and the three `ForkJoinPool` worker-factory sites. The permission is separate from `createPlatformThread` on purpose: a domain granted ordinary threads must not thereby gain privileged-context threads. Code that depends on those paths (parallel streams, `CompletableFuture` async methods, `Cleaner.create()`) needs this grant, or must run where the grant is given.
+
+Singletons that are created lazily on these paths (`CleanerFactory`, `CleanerImpl`, `BootstrapLogger`, `VirtualThread`, `ProcessHandleImpl`, `KeepAliveCache`, `KeepAliveStream`, `Poller`, `ThreadPool`, `java.nio.BufferCleaner`, `sun.nio.fs.Cancellable`) are initialised eagerly in `System.initPhase3`, before a `SecurityManager` can be installed. A check that ran inside a static initialiser would otherwise throw `ExceptionInInitializerError` and leave the class unusable for the whole JVM, trusted code included.
+
+The audit of other `java.base` sites that pair `doPrivileged` with thread creation is not complete. Only the six sites above are gated.
 
 ### 11.2 Builder methods vs traditional constructors
 
@@ -658,6 +665,32 @@ This section mirrors the thread-creation analysis for adjacent APIs that define 
 - `AccessControlContext.checkPermission(...)` evaluates against the encapsulated context (not merely the current thread at check site), enabling safe handoff to worker execution paths.
 - Dirty Chai retains authorization-focused ACC behavior and hardens context construction so unauthorized context creation does not result in privilege escalation.
 
+### 11.7 Clock resolution and timing channels
+
+Timing side channels (cache timing, and covert channels between code that shares a JVM) need a clock finer than the effect being measured. Dirty Chai reduces what downloaded code can read, in three parts. None of them eliminates timing channels (see section 13).
+
+**Reduced nanosecond clock resolution (`au.zeus.jdk.nanoTime.granularity`).**
+
+- The property is a VM start-up property, given as `-Dau.zeus.jdk.nanoTime.granularity=<nanoseconds>`. It is read once, at the end of `Arguments::parse`, and cached in `os`. Calling `System.setProperty` afterwards has no effect on the clock.
+- The value must be a power of two and less than one second, so the largest accepted value is 2^29 (536,870,912 ns). It is parsed with HotSpot's integer syntax, so the size suffixes `k`, `m`, `g`, `t` (powers of 1024) and `0x` hexadecimal are accepted. A value of 1 means no coarsening.
+- If the property is unset, the clock keeps its native resolution. If it is set to a value that does not parse, is not a power of two, or is one second or more, the VM refuses to start and prints the reason. A malformed value never falls back to full resolution (fail-secure).
+- Readings are floored, so they never move backwards. `System.nanoTime()` is floored on the monotonic clock. `Instant.now()` and `Clock.systemUTC()` reach the VM through a different native entry (`VM.getNanoTimeAdjustment`); the nanosecond-of-second field is floored there, so a granularity of 2^30 or more would have made them tick once a second, which is why the limit is below one second.
+- The coarse clock is applied at every point where Java code can read the clock: the interpreter and native entry `JVM_NanoTime`, the C1 and C2 intrinsics for `System.nanoTime()`, `JVM_GetNanoTimeAdjustment`, and the function address exported to JVMCI compilers (published under the unchanged name `os::javaTimeNanos`).
+- Not changed: `System.currentTimeMillis()` (already about 1 ms), and every use of the clock inside the VM itself (garbage collection, safepoints, handshakes, JFR, logging, JVMTI, compilation policy). Those need full resolution and are not reachable by downloaded code.
+- The granularity applies to the whole JVM. It is meant for the process-isolated JVM that hosts one remote principal's downloaded code (see `PROCESS_ISOLATION.md`). Client and server JVMs normally leave it unset. A benchmark that times a single operation shorter than the granularity cannot run with it set.
+
+**Clock sources other than `nanoTime`.**
+
+- `ThreadMXBean` thread CPU and user time have nanosecond resolution and are not covered by the property. The six methods that read them in `ThreadImpl` (`getCurrentThreadCpuTime`, `getCurrentThreadUserTime`, `getThreadCpuTime(long)`, `getThreadUserTime(long)` and the two `long[]` forms exposed through `com.sun.management.ThreadMXBean`) call `Util.checkMonitorAccess()`, so they require `ManagementPermission("monitor")`. The check is the first statement in each method, before the check that CPU timing is supported and before the virtual-thread test, so a caller without the grant learns neither.
+- Known gap: `OperatingSystemMXBean.getProcessCpuTime()` has no permission check. On Linux it is read with `times()` and is quantised to the kernel tick (normally 10 ms), so it is not a useful clock for cache timing.
+- `Perf.highResCounter()` and the JFR counter are guarded by `RuntimePermission("sun.misc.Perf.getPerf")` and `FlightRecorderPermission` respectively.
+
+**Coarsening and the thread gates work as a pair.** A program that can start a thread can build a fine clock by counting in a loop on another thread, whatever `nanoTime` returns; web browsers hit the same problem and had to disable shared-memory counters when they coarsened `performance.now()`. The `createPlatformThread`, `createVirtualThread` and `createInnocuousThread` checks (section 11.1) are what stop downloaded code starting such a thread. Coarsening without the gates leaves the counter clock; the gates without coarsening leave `nanoTime` free.
+
+**Launcher requirements (not enforced by the VM).** A JVM that hosts downloaded code should additionally be started with `--finalization=disabled` (removes the finalizer thread as a counter), `-Djava.util.concurrent.ForkJoinPool.common.parallelism=0` (the common pool then never runs, at the cost that `submit()` and `runAsync()` on it time out), and a module set that leaves out `java.management`, `jdk.management` and `jdk.jfr` when the code does not need them (`--limit-modules`). `JAVA_TOOL_OPTIONS` and `_JAVA_OPTIONS` must not be able to change the property. These belong in the `SubProcessLauncher`, which is not yet wired in production.
+
+**Covered by tests** (`test/jdk/ai/java/lang`, group `tierAI`): `NanoTimeGranularityTest`, `InstantGranularityTest`, `NanoTimeGranularityBadValueTest` and `ThreadCpuTimePermissionTest`. Each test header records the negative controls that were run.
+
 ---
 
 ## 12) Threats Addressed
@@ -688,6 +721,14 @@ This section mirrors the thread-creation analysis for adjacent APIs that define 
 - **SPIFFE workload identity forgery**: `SpiffeSubject` is only constructible inside
   `SpiffeCredentialManager` via a `private` constructor, so external code cannot fabricate
   a `SpiffeSubject` and inject forged SPIFFE principals into a `ProtectionDomain`
+- **Fine-grained clocks for timing side channels** (reduced, not eliminated): with
+  `au.zeus.jdk.nanoTime.granularity` set, `System.nanoTime()`, `Instant.now()` and
+  `Clock.systemUTC()` are no finer than the configured granularity in the interpreter, C1,
+  C2 and JVMCI-compiled code; thread CPU and user time require
+  `ManagementPermission("monitor")` (section 11.7)
+- **Counter-thread clocks built from JDK-created threads**: `Cleaner.create()` and
+  `ForkJoinPool` workers started on behalf of an unprivileged caller require
+  `RuntimePermission("createInnocuousThread")` (section 11.1)
 
 ---
 
@@ -711,6 +752,13 @@ This section mirrors the thread-creation analysis for adjacent APIs that define 
   `ObjectInputStream.readOrdinaryObject()` but not `readProxyDesc()`. Streams that reach
   object creation through `TC_PROXYCLASSDESC` therefore do not hit the current
   `SerialObjectPermission` guard placement.
+- **Timing channels are reduced, not eliminated.** Remaining after section 11.7:
+  - timing by the proxy's own server over the network (the proxy exists to talk to it; network jitter bounds the resolution, so it is poor for cache lines but adequate for coarser channels);
+  - published techniques that amplify a coarse clock, including clock-edge amplification: the clock is floored, with no jitter, so a program that spins until a reading changes can recover a finer clock from the edge (jitter is not implemented);
+  - the microarchitectural layer: cache attacks need only shared cache hardware, so they are reduced only by the process boundary together with pinning isolated JVMs to disjoint physical cores (`PROCESS_ISOLATION.md`), and nothing in the current code does the pinning;
+  - JDK thread-creation sites that pair `doPrivileged` with thread creation and have not yet been audited (section 11.1);
+  - `OperatingSystemMXBean.getProcessCpuTime()` has no permission check (section 11.7).
+- **`au.zeus.jdk.nanoTime.granularity` is per JVM and is only a mitigation when downloaded code runs in its own JVM.** Set in a JVM that also hosts trusted code, it degrades that code's timing for no benefit. It also relies on a `SecurityManager` with a restrictive policy: the thread and `ManagementPermission` checks do nothing when no `SecurityManager` is installed.
 
 ---
 
@@ -735,6 +783,9 @@ This section mirrors the thread-creation analysis for adjacent APIs that define 
 8. A `DigestGrant` never implies a domain whose `CodeSource` is a plain `CodeSource` — the `CodeSource` must be a `DigestCodeSource` with a matching algorithm and digest; otherwise the grant does not apply.
 9. `SecureClassLoader` stores a `ProtectionDomain` in `pdcache` only after all permission checks have passed and the digest has been computed; a plain `CodeSource` key is never stored, so no cache hit can bypass the digest requirement on a subsequent `defineClass` call.
 10. SPIFFE principal injection into `ProtectionDomain` occurs only when the VM is fully booted (`VM.isBooted()`), a `SecurityManager` is active, and `SpiffeCredentialManager.getSubject()` returns a non-null read-only `SpiffeSubject`; all other conditions result in `pals = null` (fail-secure: no SPIFFE principals injected rather than forged ones).
+11. When `au.zeus.jdk.nanoTime.granularity` is set, no clock readable by Java code through `System.nanoTime()`, `Instant.now()` or `Clock.systemUTC()` is finer than the granularity, in the interpreter, C1, C2 and JVMCI-compiled code; the value is fixed at VM start and cannot be changed by running code; a value that does not parse, is not a power of two, or is one second or more prevents the VM from starting.
+12. Reading a thread's CPU or user time through `ThreadMXBean` requires `ManagementPermission("monitor")` on every entry point, and the check precedes the support and virtual-thread tests so that its outcome does not depend on them.
+13. Where the JDK creates a thread for its caller under `doPrivileged` (`InnocuousThread` factory methods and `ForkJoinPool` worker factories), `RuntimePermission("createInnocuousThread")` is checked before the `doPrivileged`, not inside a shared helper, and never in a static initialiser: the singletons those paths use are initialised in `System.initPhase3` before a `SecurityManager` can be installed.
 
 ---
 

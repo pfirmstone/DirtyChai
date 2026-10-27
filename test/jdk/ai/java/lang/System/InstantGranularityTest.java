@@ -60,12 +60,13 @@ import java.util.List;
  *     instants in 100 ms and Clock.systemUTC().instant() 2,226,504, against
  *     a limit of 99.</li>
  * <li>M2: control run with the property unset.  OBSERVED: PASS.</li>
- * <li>Not run: the -Xint coarse run against the unimplemented JDK (jtreg
- *     stops at the first failing @run), and every coarse run against a
- *     correct implementation.  Nothing is claimed that the coarse runs PASS.</li>
- * <li>Not run: a mutation that coarsens nanoTime but leaves
- *     JVM_GetNanoTimeAdjustment alone.  That is the mutation this test exists
- *     to catch, and it needs the feature to exist first.</li>
+ * <li>Against the implemented feature (unmutated HotSpot, private copy of the
+ *     built JDK, runs executed directly with java rather than through
+ *     jtreg): all three @run lines PASS.</li>
+ * <li>M3: JVM_GetNanoTimeAdjustment calls os::javaTimeSystemUTC instead of
+ *     os::javaTimeSystemUTCCoarse, with nanoTime still coarse.  OBSERVED: both
+ *     coarse runs (default and -Xint) FAIL, the control run PASSES.  This is
+ *     the mutation the test exists to catch.</li>
  * </ol>
  */
 public class InstantGranularityTest {
