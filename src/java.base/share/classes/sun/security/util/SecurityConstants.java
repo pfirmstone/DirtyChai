@@ -147,6 +147,10 @@ public final class SecurityConstants {
     // java.lang.Thread
     public static final RuntimePermission CREATE_PLATFORM_THREAD =
             new RuntimePermission("createPlatformThread");
+    
+    // java.nio.channels.spi.AsynchronousChannelProvider
+    public static final RuntimePermission GET_ASYNC_CHANNEL_PROVIDER =
+            new RuntimePermission("getAsynchronousChannelProvider");
 
     // java.security.AccessControlContext
     public static final SecurityPermission CREATE_ACC_PERMISSION =

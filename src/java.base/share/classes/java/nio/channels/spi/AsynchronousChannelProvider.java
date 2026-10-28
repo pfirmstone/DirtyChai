@@ -33,6 +33,7 @@ import java.util.ServiceConfigurationError;
 import java.util.concurrent.*;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
+import sun.security.util.SecurityConstants;
 
 /**
  * Service-provider class for asynchronous channels.
@@ -161,6 +162,8 @@ public abstract class AsynchronousChannelProvider {
      * @return  The system-wide default AsynchronousChannel provider
      */
     public static AsynchronousChannelProvider provider() {
+        SecurityManager sm = System.getSecurityManager();
+        if (sm != null) SecurityConstants.GET_ASYNC_CHANNEL_PROVIDER.checkGuard(null);
         return ProviderHolder.provider;
     }
 
