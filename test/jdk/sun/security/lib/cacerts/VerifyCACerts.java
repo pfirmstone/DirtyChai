@@ -28,8 +28,7 @@
  *      8223499 8225392 8232019 8234245 8233223 8225068 8225069 8243321 8243320
  *      8243559 8225072 8258630 8259312 8256421 8225081 8225082 8225083 8245654
  *      8305975 8304760 8307134 8295894 8314960 8317373 8317374 8318759 8319187
- *      8321408 8316138 8341057 8303770 8350498 8359170 8361212 8372351 8387123
- *      8386371 8392771 8395690
+ *      8321408 8316138 8341057 8303770 8350498 8359170 8361212
  * @summary Check root CA entries in cacerts file
  */
 import java.io.ByteArrayInputStream;
@@ -48,13 +47,12 @@ public class VerifyCACerts {
             + File.separator + "security" + File.separator + "cacerts";
 
     // The numbers of certs now.
-
-    private static final int COUNT = 107;
+    private static final int COUNT = 105;
 
     // SHA-256 of cacerts, can be generated with
     // shasum -a 256 cacerts | sed -e 's/../&:/g' | tr '[:lower:]' '[:upper:]' | cut -c1-95
     private static final String CHECKSUM
-            = "5F:8D:07:81:52:CB:9A:C6:8B:87:11:05:8C:11:7B:6C:07:32:EE:23:DA:8D:38:99:D1:93:96:70:5E:0C:80:E9";
+            = "57:BD:18:38:9D:AF:25:4B:B1:C0:56:A8:00:55:92:BE:17:03:3F:DB:F7:47:CC:C4:2E:D7:07:57:23:BF:A5:84";
 
     // Hex formatter to upper case with ":" delimiter
     private static final HexFormat HEX = HexFormat.ofDelimiter(":").withUpperCase();
