@@ -284,8 +284,7 @@ class DefaultPolicyScanner {
             classname = st.sval;
             st.nextToken();
         } else if (st.ttype == '*') {
-            classname = PrincipalEntry.WILDCARD;
-            st.nextToken();
+            handleUnexpectedToken(st, Messages.getString("security.92")); //$NON-NLS-1$
         }
         if (st.ttype == '"') {
             name = st.sval;

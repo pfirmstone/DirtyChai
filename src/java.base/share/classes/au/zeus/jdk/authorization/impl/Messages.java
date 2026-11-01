@@ -73,6 +73,7 @@ public class Messages {
         messages.put("security.89","Expected entries are : \"grant\" or \"keystore\"");
         messages.put("security.90","Unexpected token encountered: {0}");
         messages.put("security.91","Class cannot be null or empty");
+        messages.put("security.92","Wildcard not allowed. Expected syntax is : principal [class_name] \"principal_name\"");
         //Uri
         messages.put("luni.82", "Relative path");
         messages.put("luni.83", "Scheme expected");

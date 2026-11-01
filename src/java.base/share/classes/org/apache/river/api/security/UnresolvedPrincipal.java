@@ -41,7 +41,7 @@ import java.security.Principal;
 public final class UnresolvedPrincipal implements Principal {
 
     /** 
-     * Wildcard value denotes any class and/or any name. 
+     * Wildcard value denotes any name. 
      */
     static final String WILDCARD = "*";
 
@@ -54,7 +54,7 @@ public final class UnresolvedPrincipal implements Principal {
     /**
      * Constructs a a new definition of a Principal with specified
      * parameters. 
-     * @param klass fully qualified class name, may be wildcard
+     * @param klass fully qualified class name
      * @param name name of principal, may be wildcard
      * @throws IllegalArgumentException if <code>klass</code> value 
      * is <code>null </code> or is empty string 
@@ -111,8 +111,7 @@ public final class UnresolvedPrincipal implements Principal {
      */
     public boolean implies(Principal another) {
         return (another != null)
-                && (WILDCARD.equals(klass) 
-                    || klass.equals(another.getClass().getName())
+                && (klass.equals(another.getClass().getName())
                 && (WILDCARD.equals(name) 
                     || (name == null ? another.getName() == null 
                         : name.equals(another.getName()))));
