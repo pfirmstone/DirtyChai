@@ -1973,7 +1973,9 @@ public class ObjectInputStream
 
         // Call filterCheck on the class before reading anything else
         filterCheck(cl, -1);
-        new SerialObjectPermission(cl.getName()).checkGuard(null);
+        if (cl != null) {
+            new SerialObjectPermission(cl.getName()).checkGuard(null);
+        }
         skipCustomData();
 
         try {
@@ -2040,6 +2042,9 @@ public class ObjectInputStream
 
         // Call filterCheck on the class before reading anything else
         filterCheck(cl, -1);
+        if (cl != null) {
+            new SerialObjectPermission(cl.getName()).checkGuard(null);
+        }
 
         skipCustomData();
 
