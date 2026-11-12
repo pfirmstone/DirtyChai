@@ -2042,7 +2042,7 @@ public class ObjectInputStream
 
         // Call filterCheck on the class before reading anything else
         filterCheck(cl, -1);
-        if (cl != null) {
+        if (cl != null && !cl.isArray()) {
             new SerialObjectPermission(cl.getName()).checkGuard(null);
         }
 
