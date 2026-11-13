@@ -93,7 +93,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * {@code -Djava.security.debug=spiffe}
  *
  * @author Peter Firmstone
- * @since 3.1.1
+ * @since 27
  */
 public final class SpiffeCredentialManager implements AutoCloseable {
 
@@ -119,7 +119,7 @@ public final class SpiffeCredentialManager implements AutoCloseable {
     // Holds the current SVID state atomically.  Null until first successful fetch.
     private final AtomicReference<R> subjectBundle = new AtomicReference<R>();
 
-    private final SpireWorkloadApiClient client;
+    private volatile SpireWorkloadApiClient client;
 
     private final List<SvidRotationListener> listeners = new ArrayList<SvidRotationListener>();
     private final Object listenerLock = new Object();
@@ -166,9 +166,27 @@ public final class SpiffeCredentialManager implements AutoCloseable {
         this.maxBackoffMs = getLongProperty(RECONNECT_MAX_BACKOFF_PROPERTY, DEFAULT_MAX_BACKOFF_MS);
 
         String socketPath = System.getProperty(SOCKET_PROPERTY, DEFAULT_SOCKET_PATH);
-        Path path = Path.of(socketPath);
+        
+        this.client = createClient(socketPath);
+        Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    close();
+                } catch (Exception ex) {
+                    if (debug != null) {
+                        debug.println(
+                                "SpiffeCredentialManager exception thrown during shutdown hook close",
+                                ex.getMessage());
+                    }
+                }
+            }
+        }, "SPIRE-Shutdown"));
+    }
 
+    private final SpireWorkloadApiClient createClient(String socketPath) {
         SpireWorkloadApiClient client = null;
+        Path path = Path.of(socketPath);
         try (SpireWorkloadApiClient c = new SpireWorkloadApiClient(path)) {
             SpireProtobuf.X509SVIDResponse response = c.fetchSVID();
             updateSubjectInternal(response);
@@ -188,21 +206,7 @@ public final class SpiffeCredentialManager implements AutoCloseable {
             scheduleReconnect(initialBackoffMs);
             // Assign even if null — reconnectWatcher() rebuilds client as needed
         }
-        this.client = client != null ? client : new UnavailableClient(path);
-        Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    close();
-                } catch (Exception ex) {
-                    if (debug != null) {
-                        debug.println(
-                                "SpiffeCredentialManager exception thrown during shutdown hook close",
-                                ex.getMessage());
-                    }
-                }
-            }
-        }, "SPIRE-Shutdown"));
+        return client != null ? client : new UnavailableClient(path);
     }
 
     /**
@@ -621,24 +625,36 @@ public final class SpiffeCredentialManager implements AutoCloseable {
      * callback will schedule the next retry.
      */
     private void reconnectWatcher() {
-        try {
-            client.stopWatching();
-            SpireProtobuf.X509SVIDResponse response = client.fetchSVID();
-            updateSubjectInternal(response);
-
-            watcherRunning = true;
-            client.startWatching(createCallback());
-            reconnectAttempts.set(0);
-
-            if (debug != null) {
-                debug.println("SPIRE watcher reconnected successfully");
+        if (client instanceof UnavailableClient) {
+            // Rebuild the client from the original socket path
+            String socketPath = System.getProperty(SOCKET_PROPERTY, DEFAULT_SOCKET_PATH);
+            try {
+                client.close();
+            } catch (Exception e) {
+                if (debug != null) {
+                    debug.println("Failed to close previous UnavailableClient: " + e);
+                }
             }
-            notifyListeners();
+            client = createClient(socketPath);
+        } else {
+            try {
+                client.stopWatching();
+                SpireProtobuf.X509SVIDResponse response = client.fetchSVID();
+                updateSubjectInternal(response);
 
-        } catch (SpiffeConnectionException e) {
-            // onError on the new callback will be called automatically via the watcher
-            if (debug != null) {
-                debug.println("Reconnection attempt failed: " + e);
+                watcherRunning = true;
+                client.startWatching(createCallback());
+                reconnectAttempts.set(0);
+
+                if (debug != null) {
+                    debug.println("SPIRE watcher reconnected successfully");
+                }
+                notifyListeners();
+            } catch (SpiffeConnectionException e) {
+                // onError on the new callback will be called automatically via the watcher
+                if (debug != null) {
+                    debug.println("Reconnection attempt failed: " + e);
+                }
             }
         }
     }
@@ -726,8 +742,11 @@ public final class SpiffeCredentialManager implements AutoCloseable {
      */
     static final class UnavailableClient extends SpireWorkloadApiClient {
 
+        private final Path socketPath;
+
         UnavailableClient(Path socketPath) {
             super(socketPath, true /* skipConnect */);
+            this.socketPath = socketPath;
         }
 
         @Override
