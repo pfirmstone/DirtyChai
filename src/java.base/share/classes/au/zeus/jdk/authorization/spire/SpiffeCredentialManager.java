@@ -207,7 +207,6 @@ public final class SpiffeCredentialManager implements AutoCloseable {
                         + " TLS will fail until SPIRE connects. Reconnection scheduled." + e);
             }
             if (c != null) c.close();
-            // Assign even if null — reconnectWatcher() rebuilds client as needed
         }
         return client != null ? client : new UnavailableClient(path);
     }
@@ -603,15 +602,21 @@ public final class SpiffeCredentialManager implements AutoCloseable {
         Thread reconnector = new Thread(new Runnable() {
             @Override
             public void run() {
-                try {
-                    Thread.sleep(delayMs);
-                    if (!watcherRunning) {
-                        reconnectWatcher();
-                    }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    if (debug != null) {
-                        debug.println("Reconnection attempt " + attemptNumber + " interrupted");
+                long backoffMs = delayMs;
+                while (!watcherRunning && reconnectAttempts.get() <= maxReconnectAttempts) {
+                    try {
+                        Thread.sleep(backoffMs);
+                        if (!watcherRunning) {
+                            SpireWorkloadApiClient client = reconnectWatcher();
+                        }
+                        if (!(client instanceof UnavailableClient)) return;
+                        backoffMs = Math.min(initialBackoffMs * (1L << (reconnectAttempts.incrementAndGet() - 1)), maxBackoffMs);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        if (debug != null) {
+                            debug.println("Reconnection attempt " + attemptNumber + " interrupted");
+                        }
+                        return;
                     }
                 }
             }
@@ -627,7 +632,7 @@ public final class SpiffeCredentialManager implements AutoCloseable {
      * and all listeners are notified. If it fails, {@code onError} on the new
      * callback will schedule the next retry.
      */
-    private void reconnectWatcher() {
+    private SpireWorkloadApiClient reconnectWatcher() {
         if (client instanceof UnavailableClient) {
             // Rebuild the client from the original socket path
             String socketPath = System.getProperty(SOCKET_PROPERTY, DEFAULT_SOCKET_PATH);
@@ -660,6 +665,7 @@ public final class SpiffeCredentialManager implements AutoCloseable {
                 }
             }
         }
+        return client;
     }
 
     /**
