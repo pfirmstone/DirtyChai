@@ -168,6 +168,7 @@ public final class SpiffeCredentialManager implements AutoCloseable {
         String socketPath = System.getProperty(SOCKET_PROPERTY, DEFAULT_SOCKET_PATH);
         
         this.client = createClient(socketPath);
+        if (client instanceof UnavailableClient) scheduleReconnect(initialBackoffMs);
         Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
             @Override
             public void run() {
@@ -187,7 +188,9 @@ public final class SpiffeCredentialManager implements AutoCloseable {
     private final SpireWorkloadApiClient createClient(String socketPath) {
         SpireWorkloadApiClient client = null;
         Path path = Path.of(socketPath);
-        try (SpireWorkloadApiClient c = new SpireWorkloadApiClient(path)) {
+        SpireWorkloadApiClient c = null;
+        try {
+            c = new SpireWorkloadApiClient(path);
             SpireProtobuf.X509SVIDResponse response = c.fetchSVID();
             updateSubjectInternal(response);
             this.watcherRunning = true;
@@ -203,7 +206,7 @@ public final class SpiffeCredentialManager implements AutoCloseable {
                         + socketPath + " — local worker identity not established."
                         + " TLS will fail until SPIRE connects. Reconnection scheduled." + e);
             }
-            scheduleReconnect(initialBackoffMs);
+            if (c != null) c.close();
             // Assign even if null — reconnectWatcher() rebuilds client as needed
         }
         return client != null ? client : new UnavailableClient(path);
