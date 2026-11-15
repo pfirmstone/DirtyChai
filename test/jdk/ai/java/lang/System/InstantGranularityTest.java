@@ -30,9 +30,9 @@
  *          PROCESS_ISOLATION.md "Fundamental In-Process Limits", item 2,
  *          "Side-channel attacks".  SECURITY_MODEL.md has no timing-specific
  *          invariant; the gap is reported, not worked around.
- * @author Claude Sonnet 5.5 (claude-sonnet-5-5) -- AI-authored under AI_POLICY.md 4.1 (Zone T)
- * @run main/othervm -Dau.zeus.jdk.nanoTime.granularity=1048576 InstantGranularityTest 1048576
- * @run main/othervm -Xint -Dau.zeus.jdk.nanoTime.granularity=1048576 InstantGranularityTest 1048576
+ * @author Claude Sonnet 5.5 (claude-sonnet-5-5) and Claude Fable 5.2 (claude-fable-5-2) -- AI-authored under AI_POLICY.md 4.1 (Zone T)
+ * @run main/othervm -Dau.zeus.jdk.nanoTime.granularity=268435456 InstantGranularityTest 268435456
+ * @run main/othervm -Xint -Dau.zeus.jdk.nanoTime.granularity=268435456 InstantGranularityTest 268435456
  * @run main/othervm InstantGranularityTest 0
  */
 
@@ -68,8 +68,31 @@ import java.util.List;
  *     coarse runs (default and -Xint) FAIL, the control run PASSES.  This is
  *     the mutation the test exists to catch.</li>
  * </ol>
+ *
+ * <h2>Revision of 2026-11-15: granularity and window</h2>
+ * Items M1 to M3 above were observed with granularity 1048576 (about 1 ms), a
+ * 100 ms coarse window and a control that required more than 500 distinct
+ * instants in 20 ms.  On Windows the wall clock read with the property unset
+ * (GetSystemTimeAsFileTime) advances about once a millisecond, and coarser on
+ * some machines, so:
+ * <ul>
+ * <li>OBSERVED, DirtyChai windows-x86_64 build, jtreg, 2026-11-15 17:57 AEST:
+ *     both coarse runs PASS and the control FAILS with "only 21 distinct
+ *     instants in 20 ms".  The control was right: a granularity equal to the
+ *     platform tick cannot tell a coarsened clock from an uncoarsened one.</li>
+ * </ul>
+ * The granularity is now 268435456 ns (2^28, about 268 ms), the window is
+ * 2 s for every run, and the control requires more than 100 distinct
+ * instants.  A coarsened clock gives about 8 in the window (limit 11); an
+ * uncoarsened one gives about 128 at a 15.6 ms tick, about 2000 at a 1 ms
+ * tick and far more on Linux.  With these values: all three runs PASS,
+ * OBSERVED by the Project Lead's tierAI run, result file stamped 2026-11-15
+ * 18:28 AEST, DirtyChai windows-x86_64 build.  STILL OWED: the failure under
+ * M3 has not been repeated since this revision.
  */
 public class InstantGranularityTest {
+
+    static final long WINDOW_MS = 2000;
 
     static long distinct(long windowMs, boolean useClock) {
         Clock clock = Clock.systemUTC();
@@ -92,13 +115,13 @@ public class InstantGranularityTest {
         List<String> failures = new ArrayList<>();
 
         if (g == 0) {
-            long n = distinct(20, false);
-            if (n <= 500) {
-                failures.add("control: only " + n + " distinct instants in 20 ms; the platform clock is"
+            long n = distinct(WINDOW_MS, false);
+            if (n <= 100) {
+                failures.add("control: only " + n + " distinct instants in " + WINDOW_MS + " ms; the platform clock is"
                         + " too coarse for the coarse runs to mean anything");
             }
         } else {
-            long window = 100;
+            long window = WINDOW_MS;
             long max = window * 1_000_000L / g + 4;
             for (boolean useClock : new boolean[] { false, true }) {
                 String label = useClock ? "Clock.systemUTC().instant()" : "Instant.now()";

@@ -1,8 +1,8 @@
 # Dirty Chai Security Model
 
-- **Version:** 2.4
+- **Version:** 2.5
 - **Date:** 2026-05-26
-- **Last Reviewed:** 2026-10-19
+- **Last Reviewed:** 2026-11-15
 - **Project:** Dirty Chai
 - **Repository:** https://github.com/pfirmstone/DirtyChai
 
@@ -78,7 +78,7 @@ If any required condition does not match, the operation is denied.
 4. **Policy-driven principal enforcement**: principal checks apply when grants include `principal` clauses.
 5. **Caller-sensitive privilege boundaries**: privileged APIs retain caller-sensitive behavior.
 6. **URI-validated code source matching**: policy matching relies on RFC 3986 URI handling.
-7. **Content-hash code source integrity**: when a `SecurityManager` is active, `SecureClassLoader` promotes every network-loaded `CodeSource` to a `DigestCodeSource` (SHA-256 by default) before computing the `ProtectionDomain`.  Policy grants that use a `digest` clause are only matched by `DigestCodeSource`-backed domains, enforcing content-addressed trust.
+7. **Content-hash code source integrity**: `SecureClassLoader` promotes every `CodeSource` that has a location to a `DigestCodeSource` (SHA-256) before computing the final `ProtectionDomain`. That covers local jar files and directories (`file:`), modules (`jrt:` and `jmod:`) and network-loaded code alike. When a `SecurityManager` is active, a failure to compute the digest fails the class load with a `SecurityException`; with none installed the failure is only logged and the plain `CodeSource` is kept.  Policy grants that use a `digest` clause are only matched by `DigestCodeSource`-backed domains, enforcing content-addressed trust. When a grant specifies a digest, its codebase URL is ignored: the content is matched wherever it is loaded from (section 8.1).
 8. **SPIFFE workload identity binding**: when a `SecurityManager` is active, `SecureClassLoader` stamps `ProtectionDomain`s for code with a non-null codebase, including network-loaded code, with SPIFFE workload principals from the SPIRE-managed `SpiffeSubject`. Those stamped principals come from the current SVID's `X500Principal` set. This lets policy `principal` clauses match both code identity and verified infrastructure identity. Injection is deferred until `VM.isBooted()`. If the SPIFFE Verifiable Identity Document (SVID) is not yet available, principal stamping is skipped and SPIFFE-constrained `principal` grants do not match (fail-secure: under-privilege rather than over-privilege).
 
 ---
@@ -340,7 +340,7 @@ This makes principal enforcement configurable by policy rather than globally for
 
 ### Overview
 
-`DigestCodeSource` extends `CodeSource` with a cryptographic content digest of the artifact at the code location. When a `SecurityManager` is active, `SecureClassLoader.getProtectionDomain(CodeSource)` automatically promotes every network-`CodeSource` to a `DigestCodeSource` before assigning a `ProtectionDomain`, so the loaded class is always bound to the artifact's hash rather than merely to its URL.
+`DigestCodeSource` extends `CodeSource` with a cryptographic content digest of the artifact at the code location. `SecureClassLoader.getProtectionDomain(CodeSource)` automatically promotes every `CodeSource` that has a location (local jar files and directories, modules and network code) to a `DigestCodeSource` before assigning a `ProtectionDomain`, so the loaded class is always bound to the artifact's hash rather than merely to its URL.
 
 ### `SecureClassLoader` promotion flow
 
@@ -593,13 +593,34 @@ When a SecurityManager is installed, Dirty Chai enforces explicit runtime permis
 - **JDK-internal ("innocuous") threads:** `RuntimePermission("createInnocuousThread")`
 - **Asynchronous I/O provider:** `RuntimePermission("getAsynchronousChannelProvider")`, checked in `AsynchronousChannelProvider.provider()`. The JDK's default asynchronous channel group creates its completion threads inside `doPrivileged`, so a thread permission checked at the thread factory never sees the caller. The check is at `provider()` because every route to a provider that can reach the default group goes through it: `AsynchronousSocketChannel.open()`, `AsynchronousServerSocketChannel.open()`, the `AsynchronousChannelGroup.with*` methods, and a direct call to `provider().openAsynchronousSocketChannel(null)`. A group created with a same-thread executor and then used through `group.provider()` is also stopped, because creating that group needs `provider()` first. The check is not in the provider's static holder, so a denial does not poison it. A caller that holds this permission can be given a thread that runs its `CompletionHandler`s, and that thread can be used as a counter clock, so grant it only to code that needs asynchronous I/O.
 
-The first two checks are applied in builder paths (`ThreadBuilders`) and in public platform-thread constructor paths (`Thread`), so both modern and traditional creation APIs are guarded.
+The first two checks are applied in builder paths (`ThreadBuilders`), in public platform-thread constructor paths (`Thread`) and in `Thread.startVirtualThread`, so both modern and traditional creation APIs are guarded. `Thread.startVirtualThread` does not go through the builder: it calls `ThreadBuilders.newVirtualThread` directly. It made no check until 2026-11-15, when a test showed that code without `createVirtualThread` could start a virtual thread through it.
 
 `createInnocuousThread` covers a different path: the JDK creating a thread *for* the caller under `doPrivileged`, for example a `Cleaner` thread (`Cleaner.create()`) or a `ForkJoinPool` worker started by `submit()`, `CompletableFuture.runAsync()` or `parallelStream()`. `doPrivileged` truncates the stack, so the `createPlatformThread` check does not see the original caller, and the new thread's stored context is not the caller's (for `InnocuousThread` it is a fixed, privileged context set by `InnocuousThread` itself). The check is therefore placed immediately before the `doPrivileged` at each such site, not inside a shared helper and not by removing the `doPrivileged`. It is implemented at the three `InnocuousThread` factory sites and the three `ForkJoinPool` worker-factory sites. The permission is separate from `createPlatformThread` on purpose: a domain granted ordinary threads must not thereby gain privileged-context threads. Code that depends on those paths (parallel streams, `CompletableFuture` async methods, `Cleaner.create()`) needs this grant, or must run where the grant is given.
 
+**Submitting to a `ForkJoinPool` when clock coarsening is on.** The worker-factory check above runs only when a worker has to be created. A pool that already has an idle worker hands it the task without creating anything, so that check never sees the submitter. On 2026-11-15 a test showed that, once trusted code had used the common pool, code without `createInnocuousThread` could run a task on a common-pool worker through `commonPool().execute` and `submit`, `ForkJoinTask.fork`, the `CompletableFuture` async methods and a parallel stream. A task on a worker runs at the same time as its submitter, which is all a counter clock needs.
+
+When `au.zeus.jdk.nanoTime.granularity` is set (section 11.7), `RuntimePermission("createInnocuousThread")` is therefore also checked, on the caller's stack, in:
+
+- `ForkJoinPool.poolSubmit`, which `execute`, `submit`, `invoke`, `invokeAll` and `lazySubmit` call, and which the `CompletableFuture` async methods reach through `execute`;
+- `ForkJoinPool.externalSubmit`;
+- `ForkJoinTask.fork()`, which a parallel stream uses;
+- `ForkJoinPool.commonPool()`;
+- `ForkJoinPool.scheduleDelayedTask` and `ForkJoinPool.startDelayScheduler`, for the scheduling methods and the thread that serves them.
+
+When the property is not set, these checks are not made. That is deliberate: without coarsening `System.nanoTime()` is available at full resolution, so denying a counter clock gains nothing, and the checks would be paid by every application that uses these methods. The switch is the constant `ForkJoinPool.TIMING_GRANULARITY_NANOS`, which is `true` when the property is absent. It is read with `System.getProperty` when `ForkJoinPool` is initialised, not from the value the VM parsed.
+
+Three consequences of where the checks sit:
+
+- A denial reaches the caller as an `AccessControlException`, except where the caller's API reports failures another way. In the test, `CompletableFuture.thenRunAsync` on an already completed future threw nothing and did not run its task.
+- In `externalSubmit`, `scheduleDelayedTask`, `startDelayScheduler` and `fork()` the check is made only for the common pool. In `fork()` it is made once the pool is known, so it covers forks by common-pool workers as well as forks from outside. In `poolSubmit` it is likewise made only for the common pool. No other `ForkJoinPool` makes the check (the code as read on 2026-11-15 at 17:54 AEST).
+- Virtual threads are scheduled on their own pool, not the common pool. `VirtualThread` hands its continuation to that pool with `externalSubmit`, `lazySubmit` and `execute` when a virtual thread is started, unparked or yields. None of those calls makes the check there, because every check site tests for the common pool first. That is from reading the code; virtual threads in a JVM with coarsening on have not been run under a test (section 13).
+
 Singletons that are created lazily on these paths (`CleanerFactory`, `CleanerImpl`, `BootstrapLogger`, `VirtualThread`, `ProcessHandleImpl`, `KeepAliveCache`, `KeepAliveStream`, `Poller`, `ThreadPool`, `java.nio.BufferCleaner`, `sun.nio.fs.Cancellable`) are initialised eagerly in `System.initPhase3`, before a `SecurityManager` can be installed. A check that ran inside a static initialiser would otherwise throw `ExceptionInInitializerError` and leave the class unusable for the whole JVM, trusted code included.
 
-The audit of other `java.base` sites that pair `doPrivileged` with thread creation is not complete. Only the six sites above are gated.
+The audit of other `java.base` sites that pair `doPrivileged` with thread creation is not complete. Only the six sites above are gated unconditionally. Sites known not to be, as of 2026-11-15:
+
+- the virtual-thread scheduler's carrier factory (`VirtualThread.createDefaultScheduler`), which creates each `CarrierThread` inside `doPrivileged` with no check. Starting a virtual thread needs `createVirtualThread`, so this is reachable only by code that already holds that permission;
+- `ForkJoinPool.startDelayScheduler`, which creates the `DelayScheduler` thread inside `doPrivileged`. It is checked only when clock coarsening is on (above).
 
 ### 11.2 Builder methods vs traditional constructors
 
@@ -686,11 +707,13 @@ Timing side channels (cache timing, and covert channels between code that shares
 - Known gap: `OperatingSystemMXBean.getProcessCpuTime()` has no permission check. On Linux it is read with `times()` and is quantised to the kernel tick (normally 10 ms), so it is not a useful clock for cache timing.
 - `Perf.highResCounter()` and the JFR counter are guarded by `RuntimePermission("sun.misc.Perf.getPerf")` and `FlightRecorderPermission` respectively.
 
-**Coarsening and the thread gates work as a pair.** A program that can start a thread can build a fine clock by counting in a loop on another thread, whatever `nanoTime` returns; web browsers hit the same problem and had to disable shared-memory counters when they coarsened `performance.now()`. The `createPlatformThread`, `createVirtualThread` and `createInnocuousThread` checks (section 11.1) are what stop downloaded code starting such a thread. Coarsening without the gates leaves the counter clock; the gates without coarsening leave `nanoTime` free.
+**Coarsening and the thread gates work as a pair.** A program that can start a thread can build a fine clock by counting in a loop on another thread, whatever `nanoTime` returns; web browsers hit the same problem and had to disable shared-memory counters when they coarsened `performance.now()`. The `createPlatformThread`, `createVirtualThread` and `createInnocuousThread` checks (section 11.1) are what stop downloaded code starting such a thread. Coarsening without the gates leaves the counter clock; the gates without coarsening leave `nanoTime` free. The property also switches on the `ForkJoinPool` submission checks described in section 11.1, because a pool worker that already exists is a second thread that none of the three creation checks sees.
 
-**Launcher requirements (not enforced by the VM).** A JVM that hosts downloaded code should additionally be started with `--finalization=disabled` (removes the finalizer thread as a counter), `-Djava.util.concurrent.ForkJoinPool.common.parallelism=0` (the common pool then never runs, at the cost that `submit()` and `runAsync()` on it time out), and a module set that leaves out `java.management`, `jdk.management` and `jdk.jfr` when the code does not need them (`--limit-modules`). `JAVA_TOOL_OPTIONS` and `_JAVA_OPTIONS` must not be able to change the property. These belong in the `SubProcessLauncher`, which is not yet wired in production.
+**Launcher requirements (not enforced by the VM).** A JVM that hosts downloaded code should additionally be started with `--finalization=disabled` (removes the finalizer thread as a counter), `-Djava.util.concurrent.ForkJoinPool.common.parallelism=0` (the common pool then starts no worker for a direct `submit()`, which times out; this is not sufficient on its own, because `ForkJoinPool.asyncCommonPool()`, which the `CompletableFuture` async methods and the delay scheduler use, raises a parallelism of 0 to 2, so the submission checks in section 11.1 are what stop code that lacks the grant), and a module set that leaves out `java.management`, `jdk.management` and `jdk.jfr` when the code does not need them (`--limit-modules`). `JAVA_TOOL_OPTIONS` and `_JAVA_OPTIONS` must not be able to change the property. These belong in the `SubProcessLauncher`, which is not yet wired in production.
 
 **Covered by tests** (`test/jdk/ai/java/lang`, group `tierAI`): `NanoTimeGranularityTest`, `InstantGranularityTest`, `NanoTimeGranularityBadValueTest` and `ThreadCpuTimePermissionTest`. Each test header records the negative controls that were run.
+
+**Thread gates covered by tests** (group `tierAI`): `VirtualThreadCreationPermissionTest` (`test/jdk/ai/java/lang/Thread`) covers `createVirtualThread` on six routes, including `Thread.startVirtualThread`. `CommonPoolSubmissionPermissionTest` (`test/jdk/ai/java/util/concurrent/ForkJoinPool`) covers the submission checks on seven routes with coarsening on. Both run a child JVM under `-Djava.security.manager=default` with a policy written by `polpAudit`, remove the one permission from an untrusted code source's grant, and compare the result with the same run with the permission left in. As of 2026-11-15 the first has passed in that form. The second passed before its last revision, which has not yet been run. Neither has yet been seen to fail on a tree with a check removed from the code; each header records that as still owed.
 
 ---
 
@@ -729,7 +752,8 @@ Timing side channels (cache timing, and covert channels between code that shares
   `ManagementPermission("monitor")` (section 11.7)
 - **Counter-thread clocks built from JDK-created threads**: `Cleaner.create()` and
   `ForkJoinPool` workers started on behalf of an unprivileged caller require
-  `RuntimePermission("createInnocuousThread")` (section 11.1)
+  `RuntimePermission("createInnocuousThread")`; with clock coarsening on, so does
+  submitting a task to a `ForkJoinPool` whose workers already exist (section 11.1)
 
 ---
 
@@ -758,6 +782,8 @@ Timing side channels (cache timing, and covert channels between code that shares
   - published techniques that amplify a coarse clock, including clock-edge amplification: the clock is floored, with no jitter, so a program that spins until a reading changes can recover a finer clock from the edge (jitter is not implemented);
   - the microarchitectural layer: cache attacks need only shared cache hardware, so they are reduced only by the process boundary together with pinning isolated JVMs to disjoint physical cores (`PROCESS_ISOLATION.md`), and nothing in the current code does the pinning;
   - JDK thread-creation sites that pair `doPrivileged` with thread creation and have not yet been audited (section 11.1). A probe on 2026-10-28 found one such path: code granted only `SocketPermission` `connect,resolve` could open an `AsynchronousSocketChannel` and have its `CompletionHandler` run on an `InnocuousThread` (created by `sun.nio.ch.ThreadPool.defaultThreadFactory()` inside `doPrivileged`), a thread that served as a counter clock (about 7.6 ns per tick). That path is now closed by `getAsynchronousChannelProvider` (section 11.1). Other sites of the same shape, such as the privileged factories in `Executors` and `StructuredTaskScopeImpl`, have not been read;
+  - an idle `ForkJoinPool` worker used as the second thread: closed only when clock coarsening is on (section 11.1). The checks added for it are limited to the common pool, so by reading they are not on the path that schedules virtual threads, but virtual threads with coarsening on have not been run under a test;
+  - the finalizer thread, which is removed only by the launcher flag `--finalization=disabled` (section 11.7) and not by the VM;
   - `OperatingSystemMXBean.getProcessCpuTime()` has no permission check (section 11.7).
 - **`au.zeus.jdk.nanoTime.granularity` is per JVM and is only a mitigation when downloaded code runs in its own JVM.** Set in a JVM that also hosts trusted code, it degrades that code's timing for no benefit. It also relies on a `SecurityManager` with a restrictive policy: the thread and `ManagementPermission` checks do nothing in a JVM that has no `SecurityManager`. Once a `SecurityManager` is installed it cannot be removed (`System.setSecurityManager(null)` throws `IllegalArgumentException`). Replacing it needs `RuntimePermission("setSecurityManager")`; because privileged blocks are limited to the calling class's own grants, even `java.base` has no authority to fall back on, so a deployment policy that grants the permission to no code at all makes replacement impossible. The remaining exposure is therefore a JVM started without a `SecurityManager`: the launcher must install one at start-up, before any downloaded code is loaded, and no deployment policy may grant `setSecurityManager` to anything. The VM does not enforce this: with `java.security.manager` unset or set to `allow` the JVM starts with no manager, and code that runs before one is installed can install a trusted `SecurityManager` or `CombinerSecurityManager` with only a non-null check. The launcher for a JVM that hosts downloaded code must therefore pass `-Djava.security.manager=default` (or another explicit installing value, never `allow` or nothing) on the command line, so that `System.initPhase3` installs the manager before any application code runs.
 
@@ -886,6 +912,8 @@ Candidates found in a search and not evaluated: the NXP i.MX 93, 95 and 91 SMARC
 11. When `au.zeus.jdk.nanoTime.granularity` is set, no clock readable by Java code through `System.nanoTime()`, `Instant.now()` or `Clock.systemUTC()` is finer than the granularity, in the interpreter, C1, C2 and JVMCI-compiled code; the value is fixed at VM start and cannot be changed by running code; a value that does not parse, is not a power of two, or is one second or more prevents the VM from starting.
 12. Reading a thread's CPU or user time through `ThreadMXBean` requires `ManagementPermission("monitor")` on every entry point, and the check precedes the support and virtual-thread tests so that its outcome does not depend on them.
 13. Where the JDK creates a thread for its caller under `doPrivileged` (`InnocuousThread` factory methods and `ForkJoinPool` worker factories), `RuntimePermission("createInnocuousThread")` is checked before the `doPrivileged`, not inside a shared helper, and never in a static initialiser: the singletons those paths use are initialised in `System.initPhase3` before a `SecurityManager` can be installed.
+14. No public route starts a virtual thread without `RuntimePermission("createVirtualThread")`: the check is made in the virtual builder's `unstarted` and `factory` and in `Thread.startVirtualThread`.
+15. When `au.zeus.jdk.nanoTime.granularity` is set, code that lacks `RuntimePermission("createInnocuousThread")` cannot get a task executed on a `ForkJoinPool` worker by submitting or forking it, whether or not the pool already has workers.
 
 ---
 

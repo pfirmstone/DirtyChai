@@ -52,8 +52,8 @@ public class CodeSourceKey {
          */
         public CodeSourceKey(CodeSource cs) throws URISyntaxException {
             this.cs = cs;
-            certs = cs.getCertificates();
-            this.uri = (Uri) cs.getUriLocation();
+            certs = cs != null ? cs.getCertificates() : null;
+            this.uri = (Uri) (cs != null ? cs.getUriLocation() : null);
             if (cs instanceof DigestCodeSource dcs) {
                 this.digestAlgorithm = dcs.getDigestAlgorithm();
                 this.digest = dcs.getDigest();   // defensive copy already made by getDigest()

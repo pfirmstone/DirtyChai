@@ -1033,6 +1033,8 @@ public class ForkJoinPool extends AbstractExecutorService
 
     // static configuration constants
 
+    static final boolean TIMING_GRANULARITY_NANOS = System.getProperty("au.zeus.jdk.nanoTime.granularity") == null;
+
     /**
      * Default idle timeout value (in milliseconds) for idle threads
      * to park waiting for new work before terminating.
@@ -2744,6 +2746,10 @@ public class ForkJoinPool extends AbstractExecutorService
     }
 
     private <T> ForkJoinTask<T> poolSubmit(boolean signalIfEmpty, ForkJoinTask<T> task) {
+        if (!TIMING_GRANULARITY_NANOS && this == common){
+            SecurityManager sm = System.getSecurityManager();
+            if (sm != null) sm.checkPermission(SecurityConstants.CREATE_INNOCUOUS_THREAD);
+        }
         Thread t; ForkJoinWorkerThread wt; WorkQueue q; boolean internal;
         if (((t = JLA.currentCarrierThread()) instanceof ForkJoinWorkerThread) &&
             (wt = (ForkJoinWorkerThread)t).pool == this) {
@@ -3274,6 +3280,10 @@ public class ForkJoinPool extends AbstractExecutorService
      * @since 1.8
      */
     public static ForkJoinPool commonPool() {
+        if (!TIMING_GRANULARITY_NANOS){
+            SecurityManager sm = System.getSecurityManager();
+            if (sm != null) sm.checkPermission(SecurityConstants.CREATE_INNOCUOUS_THREAD);
+        }
         // assert common != null : "static init error";
         return common;
     }
@@ -3430,6 +3440,10 @@ public class ForkJoinPool extends AbstractExecutorService
      */
     public <T> ForkJoinTask<T> externalSubmit(ForkJoinTask<T> task) {
         Objects.requireNonNull(task);
+        if (!TIMING_GRANULARITY_NANOS && this == common){
+            SecurityManager sm = System.getSecurityManager();
+            if (sm != null) sm.checkPermission(SecurityConstants.CREATE_INNOCUOUS_THREAD);
+        }
         externalSubmissionQueue(true).push(task, this, false);
         return task;
     }
@@ -3618,6 +3632,10 @@ public class ForkJoinPool extends AbstractExecutorService
      *  Creates and starts DelayScheduler
      */
     private DelayScheduler startDelayScheduler() {
+        if (!TIMING_GRANULARITY_NANOS && this == common){
+            SecurityManager sm = System.getSecurityManager();
+            if (sm != null) sm.checkPermission(SecurityConstants.CREATE_INNOCUOUS_THREAD);
+        }
         DelayScheduler ds;
         if ((ds = delayScheduler) == null) {
             boolean start = false;
@@ -3673,6 +3691,10 @@ public class ForkJoinPool extends AbstractExecutorService
      * @return the task
      */
     final <T> ScheduledForkJoinTask<T> scheduleDelayedTask(ScheduledForkJoinTask<T> task) {
+        if (!TIMING_GRANULARITY_NANOS && this == common){
+            SecurityManager sm = System.getSecurityManager();
+            if (sm != null) sm.checkPermission(SecurityConstants.CREATE_INNOCUOUS_THREAD);
+        }
         DelayScheduler ds;
         if (((ds = delayScheduler) == null &&
              (ds = startDelayScheduler()) == null) ||

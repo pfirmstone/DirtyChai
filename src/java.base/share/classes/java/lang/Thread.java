@@ -1691,6 +1691,8 @@ public class Thread implements Runnable {
      */
     public static Thread startVirtualThread(Runnable task) {
         Objects.requireNonNull(task);
+        SecurityManager sm = System.getSecurityManager();
+        if (sm != null) sm.checkPermission(new RuntimePermission("createVirtualThread"));
         var thread = ThreadBuilders.newVirtualThread(null, null, 0, task, AccessController.getContext());
         thread.start();
         return thread;

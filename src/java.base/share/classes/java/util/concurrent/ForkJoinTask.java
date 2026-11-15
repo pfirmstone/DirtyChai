@@ -43,6 +43,7 @@ import java.util.Objects;
 import java.util.RandomAccess;
 import java.util.concurrent.locks.LockSupport;
 import jdk.internal.misc.Unsafe;
+import sun.security.util.SecurityConstants;
 
 /**
  * Abstract base class for tasks that run within a {@link ForkJoinPool}.
@@ -649,6 +650,10 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
         }
         else
             q = (p = ForkJoinPool.common).externalSubmissionQueue(false);
+        if (!ForkJoinPool.TIMING_GRANULARITY_NANOS && p == ForkJoinPool.common){
+            SecurityManager sm = System.getSecurityManager();
+            if (sm != null) sm.checkPermission(SecurityConstants.CREATE_INNOCUOUS_THREAD);
+        }
         q.push(this, p, internal);
         return this;
     }
