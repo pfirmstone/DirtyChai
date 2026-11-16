@@ -501,18 +501,20 @@ public class ProtectionDomain {
         if (sm == null) {
             return true;
         } else {
+            // Only print if debug is enabled.
             if (DebugHolder.debug != null) {
                 return sm.getClass().getClassLoader() == null &&
                         Policy.getPolicyNoCheck().getClass().getClassLoader()
                                 == null;
-            } else {
-                try {
-                    sm.checkPermission(SecurityConstants.GET_POLICY_PERMISSION);
-                    return true;
-                } catch (SecurityException se) {
-                    return false;
-                }
-            }
+            } // else {  // A permission check can cause infinite recursion here.
+//                try {
+//                    sm.checkPermission(SecurityConstants.GET_POLICY_PERMISSION);
+//                    return true;
+//                } catch (SecurityException se) {
+//                    return false;
+//                }
+//            }
+            return false;
         }
     }
 
