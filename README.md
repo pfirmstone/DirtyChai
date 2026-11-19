@@ -114,6 +114,7 @@ See <https://openjdk.org/> for more information about the OpenJDK Community and 
    - Multi-layer validation (caller, stack, CodeSource, policy).
    - Perfect for high-security deployments.
    - Target: Organizations implementing zero-trust security models.
+   - Ambient Authority: doPrivileged methods only grant permissions recorded by polpAudit.
 
 3. **Compliance & Audit Requirements**
    - Fine-grained permission controls enable compliance tracking and audit trails.
